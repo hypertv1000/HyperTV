@@ -1934,7 +1934,10 @@ textarea{
                         precisar importar arquivo nenhum. O passo a passo de como gerar esse link está no arquivo
                         "Codigo_AppsScript_GestorClientes.gs".
                     </p>
-                    <input type="text" id="inputSheetsUrlNuvem" placeholder="Cole aqui a URL do Apps Script (termina em /exec)" onchange="atualizarStatusSincronizacaoNuvem()">
+                    <div style="display:flex; gap:8px;">
+                        <input type="text" id="inputSheetsUrlNuvem" placeholder="Cole aqui a URL do Apps Script (termina em /exec)" style="flex:1;">
+                        <button type="button" class="btn-edit btn-icon" id="btnAlternarLinkNuvem" onclick="alternarEdicaoLinkNuvem()" title="Ver/alterar link">✏️</button>
+                    </div>
                     <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
                         <button class="btn-add" style="flex:1;" onclick="salvarUrlSheetsUI()">💾 Salvar Link</button>
                         <button class="btn-edit" style="flex:1;" onclick="sincronizarNuvemManual()">🔄 Sincronizar Agora</button>
@@ -6417,6 +6420,7 @@ let sincronizandoNuvemAgora = false;
 let ultimaSincronizacaoNuvemOk = null;
 let aplicandoDadosDaNuvem = false; // evita reenviar para a nuvem o que acabou de vir dela
 let timerAgendaPushNuvem = null;
+let editandoLinkNuvem = false; // true enquanto o campo de link está desbloqueado para colar/ver a URL
 
 function getSheetsUrlNuvem(){
     try{ return localStorage.getItem(CHAVE_SHEETS_URL_NUVEM) || SHEETS_URL_PADRAO_NUVEM || ""; }
@@ -6427,9 +6431,38 @@ function salvarUrlSheetsNuvem(url){
 }
 function salvarUrlSheetsUI(){
     const campo = document.getElementById("inputSheetsUrlNuvem");
+    if(!campo) return;
+    // Se o campo está mascarado (modo "oculto") e já existe um link salvo,
+    // o texto exibido são só bolinhas — não é a URL real. Nesse caso não há
+    // nada novo para salvar; só reforça que já está sincronizado.
+    if(!editandoLinkNuvem && getSheetsUrlNuvem()){
+        mostrarSucesso("🔗 Link já está salvo e sincronizando normalmente.");
+        return;
+    }
     salvarUrlSheetsNuvem(campo.value);
+    editandoLinkNuvem = false;
     mostrarSucesso("🔗 Link salvo! Sincronizando...");
-    nuvemPull(true);
+    nuvemPull(true); // já ativa a sincronização de verdade agora, sem precisar de outro clique
+}
+
+// Alterna entre mostrar o campo mascarado (bolinhas, somente leitura) e
+// liberá-lo para colar/editar um link novo. O link real nunca aparece na
+// tela depois de salvo — fica só no localStorage, usado internamente.
+function alternarEdicaoLinkNuvem(){
+    const campo = document.getElementById("inputSheetsUrlNuvem");
+    const btn = document.getElementById("btnAlternarLinkNuvem");
+    if(!campo) return;
+    editandoLinkNuvem = !editandoLinkNuvem;
+    if(editandoLinkNuvem){
+        campo.value = "";
+        campo.readOnly = false;
+        campo.placeholder = "Cole aqui a nova URL do Apps Script (termina em /exec)";
+        campo.focus();
+        if(btn) btn.textContent = "✖️";
+    } else {
+        if(btn) btn.textContent = "✏️";
+        atualizarStatusSincronizacaoNuvem();
+    }
 }
 function desconectarNuvem(){
     pedirConfirmacao("Isso remove o link de sincronização deste aparelho (os dados já salvos na nuvem NÃO são apagados). Continuar?", () => {
@@ -6501,10 +6534,18 @@ function reRenderizarAposSincronizarNuvem(){
 function atualizarStatusSincronizacaoNuvem(msg){
     const el = document.getElementById("statusSincronizacaoNuvem");
     const campo = document.getElementById("inputSheetsUrlNuvem");
-    if(campo && document.activeElement !== campo) campo.value = getSheetsUrlNuvem();
+    const urlSalva = getSheetsUrlNuvem();
+    // Enquanto não estiver em modo de edição, o campo nunca mostra a URL
+    // real — só bolinhas (se já houver link salvo) ou vazio (se não houver).
+    // Isso evita que o link fique visível na tela e seja apagado/alterado
+    // sem querer, o que interromperia a sincronização.
+    if(campo && !editandoLinkNuvem){
+        campo.value = urlSalva ? "•".repeat(28) : "";
+        campo.readOnly = !!urlSalva;
+    }
     if(!el) return;
     if(msg){ el.textContent = msg; return; }
-    if(!getSheetsUrlNuvem()){ el.textContent = "Nenhum link configurado — os dados ficam só neste aparelho."; return; }
+    if(!urlSalva){ el.textContent = "Nenhum link configurado — os dados ficam só neste aparelho."; return; }
     el.textContent = ultimaSincronizacaoNuvemOk
         ? ("✅ Sincronizado às " + ultimaSincronizacaoNuvemOk.toLocaleTimeString("pt-BR"))
         : "Ainda não sincronizado.";
