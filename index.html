@@ -2568,7 +2568,7 @@ function mostrarSucesso(texto){
     setTimeout(() => { toast.classList.remove("ativo"); }, 2000);
 }
 
-function enviarMensagemAtivacao(cliente){
+async function enviarMensagemAtivacao(cliente){
     let valor = "";
     let match = (cliente.plano || "").match(/R\$\s*([\d.,]+)/);
     if(match) valor = match[1];
@@ -2577,14 +2577,24 @@ function enviarMensagemAtivacao(cliente){
     let promocao = (config.textoPromocao || "").trim();
     let rodape = (config.textoRodape || "").trim();
     let template = (config.modeloAtivacao && config.modeloAtivacao.trim()) ? config.modeloAtivacao : MODELO_ATIVACAO_PADRAO;
+    let linkCliente = await gerarLinkEncurtadoCliente(cliente);
     let mensagem = preencherTemplate(template, {
         nome: primeiroNome(cliente.nome),
         usuario: cliente.usuario,
         senha: cliente.senha,
         plano: nomePlano,
         valor: valor,
-        vencimento: formatarData(cliente.vencimento)
+        vencimento: formatarData(cliente.vencimento),
+        link: linkCliente || "",
+        // {areacliente}: mesma lógica usada na Renovação — já vem com a
+        // frase "🔗 Sua área do cliente:" e o link, com quebra de linha
+        // entre os dois. Some sozinho se não houver link (desativado nas
+        // configurações ou erro ao gerar).
+        areacliente: linkCliente ? `*🔗 Sua área do cliente:*\n${linkCliente}` : ""
     });
+    // Se {areacliente} (ou {link}) virou "" por estar desativado, evita
+    // deixar linha(s) em branco sobrando no meio/fim da mensagem.
+    mensagem = mensagem.replace(/\n{3,}/g, "\n\n").trimEnd();
     if(promocao) mensagem += `\n\n${promocao}`;
     if(rodape) mensagem += `\n\n${rodape}`;
     if(cliente.obs){
