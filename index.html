@@ -3895,18 +3895,6 @@ function registrarMovimentoLucro(nomeCliente, valor, idOperacao, dataMovimento){
     valor = Number(valor) || 0;
     if(valor === 0) return;
 
-    // Captura o valor ATUAL do lucro mensal exibido no Dashboard (ainda não
-    // atualizado com este movimento, pois atualizarDashboard() só roda depois
-    // de registrarMovimentoLucro nos fluxos de renovação/novo cliente).
-    // Esse é o "valor antigo" real, e não um acumulado recalculado do zero.
-    let saldoAnterior = 0;
-    let elLucroTotal = document.getElementById("lucroTotal");
-    if(elLucroTotal){
-        let textoLucro = (elLucroTotal.innerText || elLucroTotal.textContent || "")
-            .replace("R$", "").trim().replace(/\./g, "").replace(",", ".");
-        saldoAnterior = parseFloat(textoLucro) || 0;
-    }
-
     // dataMovimento chega como "YYYY-MM-DD" (sem horário), escolhida pelo
     // usuário. Se convertêssemos direto com `new Date("YYYY-MM-DD").toISOString()`,
     // o JS trata essa string como meia-noite UTC — e em fusos negativos
@@ -3925,6 +3913,22 @@ function registrarMovimentoLucro(nomeCliente, valor, idOperacao, dataMovimento){
     } else {
         dataFinal = new Date().toISOString();
     }
+
+    // O "saldo anterior" agora é calculado de forma determinística, somando
+    // os lançamentos JÁ REGISTRADOS no mesmo mês (a partir dos próprios dados
+    // de historicoLucro) — em vez de ler o número exibido na tela naquele
+    // instante. Ler da tela era frágil: um dashboard ainda não atualizado,
+    // dois registros em sequência rápida, ou uma sincronização com a nuvem
+    // acontecendo no meio do processo podiam capturar um valor errado e
+    // deixar aquele lançamento com uma posição/valor "invertido" no Histórico.
+    let dataMov = new Date(dataFinal);
+    let mesMov = dataMov.getMonth(), anoMov = dataMov.getFullYear();
+    let saldoAnterior = historicoLucro
+        .filter(mov => {
+            let d = new Date(mov.data);
+            return d.getMonth() === mesMov && d.getFullYear() === anoMov;
+        })
+        .reduce((soma, mov) => soma + (Number(mov.valor) || 0), 0);
 
     historicoLucro.push({ data: dataFinal, cliente: nomeCliente || "", valor, saldoAnterior, idOperacao: idOperacao || null });
     if(historicoLucro.length > 300) historicoLucro = historicoLucro.slice(-300);
@@ -5937,17 +5941,18 @@ function renderizarHistoricoLucro(){
     // ordena do mais antigo para o mais novo, para exibição consistente
     movimentosMes.sort((a,b) => new Date(a.data) - new Date(b.data));
 
-    // Usa o saldoAnterior já capturado no momento do movimento (valor real do
-    // Dashboard antes da operação). Isso evita que o "valor antigo" comece do
-    // zero para movimentos antigos que não tinham esse campo salvo, nesses
-    // casos calculamos como fallback (acumulado a partir das entradas do mês).
-    let acumuladoFallback = 0;
+    // Recalcula o "saldo anterior" de cada linha aqui, na hora de exibir,
+    // somando os valores em ordem cronológica — em vez de confiar no campo
+    // salvo em cada movimento. Isso faz a lista se autocorrigir mesmo que
+    // algum lançamento antigo tenha ficado com o saldo gravado errado (por
+    // exemplo, por um dashboard desatualizado ou uma sincronização com a
+    // nuvem em andamento no momento do registro), evitando que ele apareça
+    // fora de ordem/"invertido" no Histórico.
+    let acumulado = 0;
     let comSaldo = movimentosMes.map(mov => {
         let valorMov = Number(mov.valor) || 0;
-        let saldoAnterior = (typeof mov.saldoAnterior === "number")
-            ? mov.saldoAnterior
-            : acumuladoFallback;
-        acumuladoFallback += valorMov;
+        let saldoAnterior = acumulado;
+        acumulado += valorMov;
         return { cliente: mov.cliente, valor: valorMov, saldoAnterior, data: mov.data };
     });
 
@@ -6577,6 +6582,19 @@ async function nuvemPull(avisar){
     const url = getSheetsUrlNuvem();
     if(!url){ atualizarStatusSincronizacaoNuvem(); return false; }
     if(sincronizandoNuvemAgora) return false;
+
+    // Se existe um envio local agendado (debounce de 1.5s após qualquer
+    // registro — novo cliente, renovação, etc.), envia ele PRIMEIRO. Sem
+    // isso, um pull podia chegar antes desse envio e trazer da nuvem uma
+    // versão mais antiga, sobrescrevendo/perdendo o que acabou de ser
+    // registrado neste aparelho (a causa do registro "invertido" no
+    // Histórico de Lucro).
+    if(timerAgendaPushNuvem){
+        clearTimeout(timerAgendaPushNuvem);
+        timerAgendaPushNuvem = null;
+        await nuvemPush();
+    }
+
     sincronizandoNuvemAgora = true;
     if(avisar) atualizarStatusSincronizacaoNuvem("🔄 Sincronizando...");
     try{
