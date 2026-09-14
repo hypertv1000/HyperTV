@@ -1986,7 +1986,7 @@ textarea{
             <div class="config-card-body">
                 <div class="config-card-body-interno">
                     <div class="dica-variaveis">
-                        💡 Variáveis disponíveis nos modelos: <code>{nome}</code> <code>{usuario}</code> <code>{senha}</code> <code>{plano}</code> <code>{valor}</code> <code>{vencimento}</code> — na Ativação e Renovação, <code>{valor}</code> é só o número (ex: "30,00", use "R$ {valor}" no texto) — no Lembrete e na Cobrança, <code>{valor}</code> já vem formatado como "R$ ..." pronto (NÃO coloque "R$" na frente dele nesses dois) e, se houver desconto pendente, mostra automaticamente o valor original riscado + o valor final + a linha "🎁 Desconto aplicado" logo abaixo — <code>{desconto}</code> mostra só o número do desconto, se precisar dele separado — só na Renovação: <code>{areacliente}</code> (frase "🔗 Sua área do cliente:" + link, já com quebra de linha — some sozinho se não houver link ou se estiver desativado nas configurações; use <code>{link}</code> em vez dele se quiser só a URL, sem a frase) — só no Lembrete e na Cobrança: <code>{saudacao}</code> <code>{status}</code> <code>{pix_chave}</code> <code>{pix_nome}</code> <code>{pix_banco}</code> — só no Lembrete: <code>{emoji}</code> — só na Cobrança: <code>{dias}</code> (dias em atraso)
+                        💡 Variáveis disponíveis nos modelos: <code>{nome}</code> <code>{usuario}</code> <code>{senha}</code> <code>{plano}</code> <code>{valor}</code> <code>{vencimento}</code> — na Ativação e Renovação, <code>{valor}</code> é só o número (ex: "30,00", use "R$ {valor}" no texto) — no Lembrete e na Cobrança, <code>{valor}</code> já vem formatado como "R$ ..." pronto (NÃO coloque "R$" na frente dele nesses dois) e, se houver desconto pendente, mostra automaticamente o valor original riscado + o valor final + a linha "🎁 Desconto aplicado" logo abaixo — <code>{desconto}</code> mostra só o número do desconto, se precisar dele separado — <code>{areacliente}</code> (frase "🔗 Sua área do cliente:" + link, já com quebra de linha — some sozinho se não houver link ou se estiver desativado nas configurações; use <code>{link}</code> em vez dele se quiser só a URL, sem a frase; disponível em Ativação, Renovação, Lembrete e Cobrança) — só no Lembrete e na Cobrança: <code>{saudacao}</code> <code>{status}</code> <code>{pix_chave}</code> <code>{pix_nome}</code> <code>{pix_banco}</code> — só no Lembrete: <code>{emoji}</code> — só na Cobrança: <code>{dias}</code> (dias em atraso)
                     </div>
 
                     <div class="linha-checkbox-config">
@@ -2419,7 +2419,7 @@ function formatarValorComDesconto(valorOriginal, desconto){
     return `R$ ${textoFinal}`;
 }
 
-function enviarMensagemVencido(cliente){
+async function enviarMensagemVencido(cliente){
     let config = JSON.parse(localStorage.getItem("configuracoes")) || {};
     let chavePix = config.pixChave || "";
     let nomePix = config.pixNome || "";
@@ -2435,6 +2435,7 @@ function enviarMensagemVencido(cliente){
     let descontoCobranca = cliente.descontoIndicacao || 0;
 
     let template = (config.modeloCobranca && config.modeloCobranca.trim()) ? config.modeloCobranca : MODELO_COBRANCA_PADRAO;
+    let linkCliente = await gerarLinkEncurtadoCliente(cliente);
     let mensagem = preencherTemplate(template, {
         nome: primeiroNome(cliente.nome),
         plano: (cliente.plano || "").split(" - ")[0],
@@ -2445,8 +2446,11 @@ function enviarMensagemVencido(cliente){
         status: textoVencimentoMsg,
         pix_chave: chavePix,
         pix_nome: nomePix,
-        pix_banco: bancoPix
+        pix_banco: bancoPix,
+        link: linkCliente || "",
+        areacliente: linkCliente ? `*🔗 Sua área do cliente:*\n${linkCliente}` : ""
     });
+    mensagem = mensagem.replace(/\n{3,}/g, "\n\n").trimEnd();
     window.open(`https://wa.me/${cliente.whatsapp}?text=${encodeURIComponent(mensagem)}`, "_blank");
 }
 
@@ -6027,7 +6031,7 @@ function saudacaoBrasileira(){
     return "Boa noite";
 }
 
-function enviarLembrete(index){
+async function enviarLembrete(index){
     let cliente = clientes[index];
     if(!cliente) return;
     let nome = primeiroNome(cliente.nome);
@@ -6053,6 +6057,7 @@ function enviarLembrete(index){
 
     const saudacao = saudacaoBrasileira();
     let template = (config.modeloLembrete && config.modeloLembrete.trim()) ? config.modeloLembrete : MODELO_LEMBRETE_PADRAO;
+    let linkCliente = await gerarLinkEncurtadoCliente(cliente);
     let mensagem = preencherTemplate(template, {
         nome: nome,
         plano: (plano || "").split(" - ")[0],
@@ -6063,8 +6068,12 @@ function enviarLembrete(index){
         status: textoExpiracao,
         pix_chave: chavePix,
         pix_nome: nomePix,
-        pix_banco: bancoPix
+        pix_banco: bancoPix,
+        link: linkCliente || "",
+        areacliente: linkCliente ? `*🔗 Sua área do cliente:*\n${linkCliente}` : ""
     });
+    // Evita linha(s) em branco sobrando quando {areacliente}/{link} vier vazio.
+    mensagem = mensagem.replace(/\n{3,}/g, "\n\n").trimEnd();
     window.open(`https://wa.me/${whatsapp}?text=${encodeURIComponent(mensagem)}`, "_blank");
 }
 
