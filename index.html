@@ -6626,6 +6626,18 @@ async function nuvemPull(avisar){
         clearTimeout(timerAgendaPushNuvem);
         timerAgendaPushNuvem = null;
         await nuvemPush();
+        // Se mesmo depois de tentar enviar ainda sobrou uma marca de
+        // pendência (ex: o envio falhou por causa de uma rede instável logo
+        // ao voltar do WhatsApp), NÃO prossegue para buscar da nuvem — isso
+        // baixaria uma versão antiga e apagaria a renovação/alteração local
+        // que ainda não foi confirmada no servidor. Melhor esperar a próxima
+        // tentativa (próximo intervalo automático, ou o app reabrindo de
+        // novo) do que arriscar sobrescrever dado local mais novo.
+        if(existePushNuvemPendente()){
+            if(avisar) mostrarAlerta("Há uma alteração local que ainda não foi confirmada na nuvem (falha de envio). Tentando novamente em instantes — evitando sobrescrever seus dados.", "aviso");
+            atualizarStatusSincronizacaoNuvem();
+            return false;
+        }
     }
 
     sincronizandoNuvemAgora = true;
@@ -6708,6 +6720,11 @@ async function nuvemPush(){
     }catch(e){
         console.error("Falha ao sincronizar (push):", e);
         atualizarStatusSincronizacaoNuvem("⚠️ Salvo neste aparelho, mas falhou ao enviar para a nuvem — " + mensagemErroSincronizacaoNuvem(e).replace("⚠️ ", ""));
+        // Tenta de novo em breve (rede pode estar instável logo ao voltar de
+        // outro app, como o WhatsApp) — não espera o ciclo normal de 60s,
+        // para a renovação aparecer no Dashboard o quanto antes.
+        clearTimeout(timerAgendaPushNuvem);
+        timerAgendaPushNuvem = setTimeout(nuvemPush, 5000);
     } finally {
         sincronizandoNuvemAgora = false;
     }
