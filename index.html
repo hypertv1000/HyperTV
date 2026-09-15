@@ -6446,6 +6446,27 @@ let aplicandoDadosDaNuvem = false; // evita reenviar para a nuvem o que acabou d
 let timerAgendaPushNuvem = null;
 let editandoLinkNuvem = false; // true enquanto o campo de link está desbloqueado para colar/ver a URL
 
+// Marca (persistida no localStorage, não só em memória) de que existe uma
+// alteração local ainda não confirmada na nuvem. É necessário guardar isso
+// no localStorage — e não só na variável timerAgendaPushNuvem — porque uma
+// ação como "Renovar" costuma abrir o WhatsApp (wa.me) logo em seguida: em
+// celular isso geralmente joga o navegador/PWA para segundo plano, e o
+// sistema pode congelar ou até encerrar a aba antes do setTimeout de 1.5s
+// do envio rodar. Se isso acontecer, ao reabrir o painel o timer já não
+// existe mais (variável de memória zerada), mas esta marca no localStorage
+// continua lá — e é usada para forçar o envio ANTES de qualquer busca da
+// nuvem, evitando que uma versão antiga sobrescreva a renovação feita.
+const CHAVE_NUVEM_PUSH_PENDENTE = "gestorClientes_nuvemPushPendente";
+function marcarPushNuvemPendente(){
+    try{ localStorage.setItem(CHAVE_NUVEM_PUSH_PENDENTE, String(Date.now())); }catch(e){}
+}
+function limparPushNuvemPendente(){
+    try{ localStorage.removeItem(CHAVE_NUVEM_PUSH_PENDENTE); }catch(e){}
+}
+function existePushNuvemPendente(){
+    try{ return !!localStorage.getItem(CHAVE_NUVEM_PUSH_PENDENTE); }catch(e){ return false; }
+}
+
 function getSheetsUrlNuvem(){
     try{ return localStorage.getItem(CHAVE_SHEETS_URL_NUVEM) || SHEETS_URL_PADRAO_NUVEM || ""; }
     catch(e){ return SHEETS_URL_PADRAO_NUVEM || ""; }
@@ -6514,6 +6535,7 @@ function desconectarNuvem(){
 })();
 
 function agendarNuvemPush(){
+    marcarPushNuvemPendente();
     clearTimeout(timerAgendaPushNuvem);
     timerAgendaPushNuvem = setTimeout(nuvemPush, 1500);
 }
@@ -6593,12 +6615,14 @@ async function nuvemPull(avisar){
     if(sincronizandoNuvemAgora) return false;
 
     // Se existe um envio local agendado (debounce de 1.5s após qualquer
-    // registro — novo cliente, renovação, etc.), envia ele PRIMEIRO. Sem
-    // isso, um pull podia chegar antes desse envio e trazer da nuvem uma
-    // versão mais antiga, sobrescrevendo/perdendo o que acabou de ser
-    // registrado neste aparelho (a causa do registro "invertido" no
-    // Histórico de Lucro).
-    if(timerAgendaPushNuvem){
+    // registro — novo cliente, renovação, etc.) OU uma marca de envio
+    // pendente que sobrou de uma sessão anterior (ex: o navegador foi para
+    // segundo plano ao abrir o WhatsApp logo após uma renovação, e o timer
+    // de 1.5s nunca chegou a rodar), envia ele PRIMEIRO. Sem isso, um pull
+    // podia chegar antes desse envio e trazer da nuvem uma versão mais
+    // antiga, sobrescrevendo/perdendo o que acabou de ser registrado neste
+    // aparelho (renovação "sumindo" do Dashboard, lucro não contabilizado).
+    if(timerAgendaPushNuvem || existePushNuvemPendente()){
         clearTimeout(timerAgendaPushNuvem);
         timerAgendaPushNuvem = null;
         await nuvemPush();
@@ -6676,6 +6700,7 @@ async function nuvemPush(){
         catch(eParse){ throw new Error("resposta_nao_json:" + resp.status); }
         if(data && data.ok){
             ultimaSincronizacaoNuvemOk = new Date();
+            limparPushNuvemPendente();
             atualizarStatusSincronizacaoNuvem();
         } else {
             throw new Error((data && data.erro) || "resposta inválida");
