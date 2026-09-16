@@ -3119,13 +3119,24 @@ function definirCreditosRapido(qtd){
     atualizarValorRenovacaoRevenda();
 }
 
-function renovarCliente(){
+async function renovarCliente(){
     if(clienteRenovacao === null) return;
     let cliente = clientes[clienteRenovacao];
 
+    // Abre a aba do WhatsApp em branco JÁ AGORA, ainda dentro do clique do
+    // usuário — se ela só fosse aberta depois de aguardar o envio para a
+    // nuvem, o navegador poderia bloquear o pop-up por não reconhecer mais
+    // aquilo como resposta direta a um clique. Mais abaixo, quando a
+    // mensagem estiver pronta, só trocamos o endereço dessa aba.
+    let janelaWhatsRenov = cliente.whatsapp ? window.open("", "_blank") : null;
+
     if(ehClienteRevenda(cliente)){
         let creditos = parseInt(document.getElementById("renovacaoCreditos").value) || 0;
-        if(creditos <= 0){ mostrarAlerta("Informe a quantidade de créditos.", "aviso"); return; }
+        if(creditos <= 0){
+            if(janelaWhatsRenov) janelaWhatsRenov.close();
+            mostrarAlerta("Informe a quantidade de créditos.", "aviso");
+            return;
+        }
 
         let subRevendas = Array.isArray(cliente.subRevendas) ? cliente.subRevendas : [];
         let subSelecionada = null;
@@ -3165,8 +3176,12 @@ function renovarCliente(){
         salvar();
         renderizar();
         atualizarDashboard();
-        enviarMensagemRenovacaoRevenda({ ...cliente, nome: nomeLucro }, creditos, valorTotal);
         fecharModalRenovacao();
+        // Só dispara a mensagem depois que a renovação foi enviada para a
+        // nuvem — assim, se o app fechar logo em seguida (é comum o cliente
+        // já sair para o WhatsApp), os créditos não ficam só no aparelho.
+        await forcarSincronizacaoNuvemAntesDeMensagem();
+        enviarMensagemRenovacaoRevenda({ ...cliente, nome: nomeLucro }, creditos, valorTotal, janelaWhatsRenov);
         return;
     }
 
@@ -3233,16 +3248,22 @@ function renovarCliente(){
     salvar();
     renderizar();
     atualizarDashboard();
+    fecharModalRenovacao();
+
+    // Só dispara a mensagem depois que a renovação foi enviada para a
+    // nuvem — assim, se o app fechar logo em seguida (é comum o cliente já
+    // sair para o WhatsApp), a renovação não fica só neste aparelho.
+    await forcarSincronizacaoNuvemAntesDeMensagem();
+
     // A mensagem de renovação ainda enxerga o desconto pendente do cliente
     // (usado para já mostrar o valor com desconto). Só depois dela zeramos
     // o campo, garantindo que ele valha só para esta renovação.
-    enviarMensagemRenovacao(clientes[clienteRenovacao]);
+    await enviarMensagemRenovacao(clientes[clienteRenovacao], janelaWhatsRenov);
     if(descontoAplicadoRenov > 0){
         clientes[clienteRenovacao].descontoIndicacao = 0;
         salvar();
         renderizar();
     }
-    fecharModalRenovacao();
 }
 
 /* ══════════════════════════════════════════════
@@ -3322,6 +3343,20 @@ function obterLinkClienteCompleto(cliente){
     return `${urlPortal}?d=${codigo}`;
 }
 
+// Abre o link do WhatsApp com segurança. Se "janelaPreAberta" foi aberta
+// ainda dentro do clique do usuário (antes de qualquer espera de rede),
+// navega ela para o link em vez de chamar window.open novamente — isso
+// evita que o navegador bloqueie o pop-up depois de aguardar o envio para
+// a nuvem e/ou o encurtamento do link.
+function abrirWhatsApp(numero, mensagem, janelaPreAberta){
+    const url = `https://wa.me/${numero}?text=${encodeURIComponent(mensagem)}`;
+    if(janelaPreAberta && !janelaPreAberta.closed){
+        janelaPreAberta.location.href = url;
+    } else {
+        window.open(url, "_blank");
+    }
+}
+
 async function gerarLinkEncurtadoCliente(cliente){
     const linkCompleto = obterLinkClienteCompleto(cliente);
     if(!linkCompleto) return "";
@@ -3351,7 +3386,11 @@ async function gerarLinkEncurtadoCliente(cliente){
     return linkCompleto; // não foi possível encurtar: usa o link completo mesmo assim
 }
 
-async function enviarMensagemRenovacao(cliente){
+async function enviarMensagemRenovacao(cliente, janelaPreAberta){
+    if(!cliente.whatsapp){
+        if(janelaPreAberta && !janelaPreAberta.closed) janelaPreAberta.close();
+        return;
+    }
     let valorNumerico = 0;
     let config = JSON.parse(localStorage.getItem("configuracoes")) || {};
     let promocao = config.textoPromocao || "";
@@ -3392,7 +3431,7 @@ async function enviarMensagemRenovacao(cliente){
         let obsFormatado = cliente.obs.replace(/\\n/g, "\n");
         mensagem += `\n~~~~~~~~~~~~~~~~~~\n${obsFormatado}`;
     }
-    window.open(`https://wa.me/${cliente.whatsapp}?text=${encodeURIComponent(mensagem)}`, "_blank");
+    abrirWhatsApp(cliente.whatsapp, mensagem, janelaPreAberta);
 }
 
 function configurarUploadLogo(){
@@ -4754,7 +4793,7 @@ function enviarMensagemAtivacaoRevenda(cliente){
     window.open(`https://wa.me/${cliente.whatsapp}?text=${encodeURIComponent(mensagem)}`, "_blank");
 }
 
-function enviarMensagemRenovacaoRevenda(cliente, creditos, valorTotal){
+function enviarMensagemRenovacaoRevenda(cliente, creditos, valorTotal, janelaPreAberta){
     if(!cliente.whatsapp) return;
     let mensagem =
 `*✅ Créditos renovados (Revenda) ✅*
@@ -4762,7 +4801,7 @@ function enviarMensagemRenovacaoRevenda(cliente, creditos, valorTotal){
 👤 Cliente: ${primeiroNome(cliente.nome)}
 🔸 Créditos adicionados: ${creditos}
 🔸 Valor: ${moeda(valorTotal)}`;
-    window.open(`https://wa.me/${cliente.whatsapp}?text=${encodeURIComponent(mensagem)}`, "_blank");
+    abrirWhatsApp(cliente.whatsapp, mensagem, janelaPreAberta);
 }
 
 // ===== Campo "Valor recebido": fica oculto por padrão (só quem sabe do
@@ -6446,27 +6485,6 @@ let aplicandoDadosDaNuvem = false; // evita reenviar para a nuvem o que acabou d
 let timerAgendaPushNuvem = null;
 let editandoLinkNuvem = false; // true enquanto o campo de link está desbloqueado para colar/ver a URL
 
-// Marca (persistida no localStorage, não só em memória) de que existe uma
-// alteração local ainda não confirmada na nuvem. É necessário guardar isso
-// no localStorage — e não só na variável timerAgendaPushNuvem — porque uma
-// ação como "Renovar" costuma abrir o WhatsApp (wa.me) logo em seguida: em
-// celular isso geralmente joga o navegador/PWA para segundo plano, e o
-// sistema pode congelar ou até encerrar a aba antes do setTimeout de 1.5s
-// do envio rodar. Se isso acontecer, ao reabrir o painel o timer já não
-// existe mais (variável de memória zerada), mas esta marca no localStorage
-// continua lá — e é usada para forçar o envio ANTES de qualquer busca da
-// nuvem, evitando que uma versão antiga sobrescreva a renovação feita.
-const CHAVE_NUVEM_PUSH_PENDENTE = "gestorClientes_nuvemPushPendente";
-function marcarPushNuvemPendente(){
-    try{ localStorage.setItem(CHAVE_NUVEM_PUSH_PENDENTE, String(Date.now())); }catch(e){}
-}
-function limparPushNuvemPendente(){
-    try{ localStorage.removeItem(CHAVE_NUVEM_PUSH_PENDENTE); }catch(e){}
-}
-function existePushNuvemPendente(){
-    try{ return !!localStorage.getItem(CHAVE_NUVEM_PUSH_PENDENTE); }catch(e){ return false; }
-}
-
 function getSheetsUrlNuvem(){
     try{ return localStorage.getItem(CHAVE_SHEETS_URL_NUVEM) || SHEETS_URL_PADRAO_NUVEM || ""; }
     catch(e){ return SHEETS_URL_PADRAO_NUVEM || ""; }
@@ -6535,7 +6553,6 @@ function desconectarNuvem(){
 })();
 
 function agendarNuvemPush(){
-    marcarPushNuvemPendente();
     clearTimeout(timerAgendaPushNuvem);
     timerAgendaPushNuvem = setTimeout(nuvemPush, 1500);
 }
@@ -6615,29 +6632,24 @@ async function nuvemPull(avisar){
     if(sincronizandoNuvemAgora) return false;
 
     // Se existe um envio local agendado (debounce de 1.5s após qualquer
-    // registro — novo cliente, renovação, etc.) OU uma marca de envio
-    // pendente que sobrou de uma sessão anterior (ex: o navegador foi para
-    // segundo plano ao abrir o WhatsApp logo após uma renovação, e o timer
-    // de 1.5s nunca chegou a rodar), envia ele PRIMEIRO. Sem isso, um pull
-    // podia chegar antes desse envio e trazer da nuvem uma versão mais
-    // antiga, sobrescrevendo/perdendo o que acabou de ser registrado neste
-    // aparelho (renovação "sumindo" do Dashboard, lucro não contabilizado).
-    if(timerAgendaPushNuvem || existePushNuvemPendente()){
+    // registro — novo cliente, renovação, etc.), envia ele PRIMEIRO. Sem
+    // isso, um pull podia chegar antes desse envio e trazer da nuvem uma
+    // versão mais antiga, sobrescrevendo/perdendo o que acabou de ser
+    // registrado neste aparelho (a causa do registro "invertido" no
+    // Histórico de Lucro).
+    if(timerAgendaPushNuvem){
         clearTimeout(timerAgendaPushNuvem);
         timerAgendaPushNuvem = null;
         await nuvemPush();
-        // Se mesmo depois de tentar enviar ainda sobrou uma marca de
-        // pendência (ex: o envio falhou por causa de uma rede instável logo
-        // ao voltar do WhatsApp), NÃO prossegue para buscar da nuvem — isso
-        // baixaria uma versão antiga e apagaria a renovação/alteração local
-        // que ainda não foi confirmada no servidor. Melhor esperar a próxima
-        // tentativa (próximo intervalo automático, ou o app reabrindo de
-        // novo) do que arriscar sobrescrever dado local mais novo.
-        if(existePushNuvemPendente()){
-            if(avisar) mostrarAlerta("Há uma alteração local que ainda não foi confirmada na nuvem (falha de envio). Tentando novamente em instantes — evitando sobrescrever seus dados.", "aviso");
-            atualizarStatusSincronizacaoNuvem();
-            return false;
-        }
+        // Mesmo depois do envio responder "ok", a escrita pode levar um
+        // instante para ficar realmente visível para uma leitura logo em
+        // seguida (Apps Script/Sheets não garante consistência imediata).
+        // Sem essa pausa, o GET abaixo podia chegar rápido demais e trazer
+        // de volta a versão ANTERIOR à renovação, sobrescrevendo no aparelho
+        // o que acabou de ser enviado (cliente "volta" a aparecer pendente
+        // no Dashboard e o valor renovado some). Por isso o pull sempre
+        // espera um pouco mais do que o tempo do envio antes de buscar.
+        await new Promise(res => setTimeout(res, 2000));
     }
 
     sincronizandoNuvemAgora = true;
@@ -6712,7 +6724,6 @@ async function nuvemPush(){
         catch(eParse){ throw new Error("resposta_nao_json:" + resp.status); }
         if(data && data.ok){
             ultimaSincronizacaoNuvemOk = new Date();
-            limparPushNuvemPendente();
             atualizarStatusSincronizacaoNuvem();
         } else {
             throw new Error((data && data.erro) || "resposta inválida");
@@ -6720,11 +6731,6 @@ async function nuvemPush(){
     }catch(e){
         console.error("Falha ao sincronizar (push):", e);
         atualizarStatusSincronizacaoNuvem("⚠️ Salvo neste aparelho, mas falhou ao enviar para a nuvem — " + mensagemErroSincronizacaoNuvem(e).replace("⚠️ ", ""));
-        // Tenta de novo em breve (rede pode estar instável logo ao voltar de
-        // outro app, como o WhatsApp) — não espera o ciclo normal de 60s,
-        // para a renovação aparecer no Dashboard o quanto antes.
-        clearTimeout(timerAgendaPushNuvem);
-        timerAgendaPushNuvem = setTimeout(nuvemPush, 5000);
     } finally {
         sincronizandoNuvemAgora = false;
     }
@@ -6732,6 +6738,19 @@ async function nuvemPush(){
 
 function sincronizarNuvemManual(){
     nuvemPull(true);
+}
+
+// Força o envio imediato para a nuvem (em vez de esperar o debounce de
+// 1.5s) e só retorna quando ele terminar — usado antes de disparar a
+// mensagem de renovação no WhatsApp, para garantir que a renovação já
+// esteja salva na nuvem antes de seguir para a mensagem. Se não houver
+// link de nuvem configurado, ou se o envio falhar, segue em frente do
+// mesmo jeito (a mensagem não pode ficar travada por causa da rede).
+async function forcarSincronizacaoNuvemAntesDeMensagem(){
+    if(!getSheetsUrlNuvem()) return;
+    clearTimeout(timerAgendaPushNuvem);
+    timerAgendaPushNuvem = null;
+    try{ await nuvemPush(); }catch(e){ /* já tratado dentro de nuvemPush */ }
 }
 
 document.addEventListener("DOMContentLoaded", function(){
