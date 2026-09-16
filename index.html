@@ -6704,6 +6704,7 @@ async function nuvemPull(avisar){
     const url = getSheetsUrlNuvem();
     if(!url){ atualizarStatusSincronizacaoNuvem(); return false; }
     if(sincronizandoNuvemAgora) return false;
+    reiniciarContadorNuvem(); // toda busca real reinicia a contagem visual
 
     // Se existe um envio local agendado (debounce de 1.5s após qualquer
     // registro — novo cliente, renovação, etc.), envia ele PRIMEIRO. Sem
@@ -6814,6 +6815,45 @@ function sincronizarNuvemManual(){
     nuvemPull(true);
 }
 
+/* ══════════════════════════════════════════════
+   CONTADOR VISUAL DA PRÓXIMA SINCRONIZAÇÃO
+   Mostra, num cantinho discreto da tela, quantos segundos faltam para a
+   próxima busca automática de dados na nuvem (a cada 60s). Puramente
+   visual — não interfere na sincronização em si.
+══════════════════════════════════════════════ */
+const SEGUNDOS_ENTRE_SINCRONIZACOES_NUVEM = 60;
+let segundosParaProximaSincronizacaoNuvem = SEGUNDOS_ENTRE_SINCRONIZACOES_NUVEM;
+
+function atualizarTextoContadorNuvem(){
+    const el = document.getElementById("nuvemContadorMini");
+    if(!el) return;
+    if(!getSheetsUrlNuvem()){ el.style.display = "none"; return; }
+    el.style.display = "block";
+    el.textContent = sincronizandoNuvemAgora
+        ? "☁️ sincronizando…"
+        : `☁️ próx. sinc. em ${segundosParaProximaSincronizacaoNuvem}s`;
+}
+
+// Zera a contagem (chamado sempre que uma sincronização acabou de
+// acontecer, manual ou automática), pra o número na tela continuar
+// refletindo o tempo real até a próxima busca.
+function reiniciarContadorNuvem(){
+    segundosParaProximaSincronizacaoNuvem = SEGUNDOS_ENTRE_SINCRONIZACOES_NUVEM;
+    atualizarTextoContadorNuvem();
+}
+
+function iniciarContadorNuvem(){
+    atualizarTextoContadorNuvem();
+    setInterval(() => {
+        segundosParaProximaSincronizacaoNuvem--;
+        if(segundosParaProximaSincronizacaoNuvem <= 0){
+            segundosParaProximaSincronizacaoNuvem = SEGUNDOS_ENTRE_SINCRONIZACOES_NUVEM;
+            nuvemPull(false);
+        }
+        atualizarTextoContadorNuvem();
+    }, 1000);
+}
+
 // Força o envio imediato para a nuvem (em vez de esperar o debounce de
 // 1.5s) e só retorna quando ele terminar — usado antes de disparar a
 // mensagem de renovação no WhatsApp, para garantir que a renovação já
@@ -6859,7 +6899,7 @@ document.addEventListener("DOMContentLoaded", function(){
         // pegar alterações feitas em outro aparelho.
         atualizarStatusSincronizacaoNuvem();
         if(getSheetsUrlNuvem()) setTimeout(() => nuvemPull(false), 600);
-        setInterval(() => nuvemPull(false), 60000);
+        iniciarContadorNuvem();
     } catch(erro){
         console.log(erro);
         mostrarAlerta("Erro ao carregar sistema: " + erro.message, "erro");
@@ -7206,5 +7246,11 @@ document.addEventListener("DOMContentLoaded", function(){
         </div>
     </div>
 </div>
+
+<!-- Contador minúsculo mostrando quanto falta para a próxima busca
+     automática de dados na nuvem (a cada 60s). Só some se não houver
+     nenhum link de nuvem configurado. -->
+<div id="nuvemContadorMini" style="display:none;position:fixed;bottom:4px;right:6px;font-size:9px;line-height:1;color:#64748b;opacity:0.55;z-index:9999;pointer-events:none;user-select:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;"></div>
 </body>
+
 </html>
