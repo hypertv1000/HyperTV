@@ -3250,15 +3250,20 @@ async function renovarCliente(){
     atualizarDashboard();
     fecharModalRenovacao();
 
-    // Só dispara a mensagem depois que a renovação foi enviada para a
-    // nuvem — assim, se o app fechar logo em seguida (é comum o cliente já
-    // sair para o WhatsApp), a renovação não fica só neste aparelho.
-    await forcarSincronizacaoNuvemAntesDeMensagem();
+    // O envio para a nuvem e a geração do link encurtado da área do
+    // cliente não dependem um do outro — rodando os dois ao mesmo tempo
+    // (em vez de um depois do outro) a espera total fica limitada ao mais
+    // lento dos dois, não à soma dos dois. A mensagem só é aberta depois
+    // que a renovação já estiver garantida na nuvem.
+    let [, linkClienteRenov] = await Promise.all([
+        forcarSincronizacaoNuvemAntesDeMensagem(),
+        gerarLinkEncurtadoCliente(clientes[clienteRenovacao])
+    ]);
 
     // A mensagem de renovação ainda enxerga o desconto pendente do cliente
     // (usado para já mostrar o valor com desconto). Só depois dela zeramos
     // o campo, garantindo que ele valha só para esta renovação.
-    await enviarMensagemRenovacao(clientes[clienteRenovacao], janelaWhatsRenov);
+    await enviarMensagemRenovacao(clientes[clienteRenovacao], janelaWhatsRenov, linkClienteRenov);
     if(descontoAplicadoRenov > 0){
         clientes[clienteRenovacao].descontoIndicacao = 0;
         salvar();
@@ -3452,7 +3457,7 @@ async function gerarLinkEncurtadoCliente(cliente){
     return linkCompleto; // não foi possível encurtar: usa o link completo mesmo assim
 }
 
-async function enviarMensagemRenovacao(cliente, janelaPreAberta){
+async function enviarMensagemRenovacao(cliente, janelaPreAberta, linkClientePreparado){
     if(!cliente.whatsapp){
         if(janelaPreAberta && !janelaPreAberta.closed) janelaPreAberta.close();
         return;
@@ -3464,7 +3469,10 @@ async function enviarMensagemRenovacao(cliente, janelaPreAberta){
     let match = cliente.plano.match(/R\$\s*([\d.,]+)/);
     if(match) valorNumerico = parseFloat(match[1].replace(",",".")) || 0;
     let nomePlano = cliente.plano.split(" - ")[0];
-    let linkCliente = await gerarLinkEncurtadoCliente(cliente);
+    // Se o link já veio pronto (calculado em paralelo com o envio para a
+    // nuvem, lá no renovarCliente), usa ele direto em vez de buscar de novo
+    // — evita repetir a chamada ao TinyURL/is.gd e perder tempo à toa.
+    let linkCliente = (linkClientePreparado !== undefined) ? linkClientePreparado : await gerarLinkEncurtadoCliente(cliente);
     let template = (config.modeloRenovacao && config.modeloRenovacao.trim()) ? config.modeloRenovacao : MODELO_RENOVACAO_PADRAO;
     let mensagem = preencherTemplate(template, {
         nome: primeiroNome(cliente.nome),
