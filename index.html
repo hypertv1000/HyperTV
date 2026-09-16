@@ -3128,7 +3128,7 @@ async function renovarCliente(){
     // nuvem, o navegador poderia bloquear o pop-up por não reconhecer mais
     // aquilo como resposta direta a um clique. Mais abaixo, quando a
     // mensagem estiver pronta, só trocamos o endereço dessa aba.
-    let janelaWhatsRenov = cliente.whatsapp ? window.open("", "_blank") : null;
+    let janelaWhatsRenov = cliente.whatsapp ? abrirJanelaCarregandoWhatsApp() : null;
 
     if(ehClienteRevenda(cliente)){
         let creditos = parseInt(document.getElementById("renovacaoCreditos").value) || 0;
@@ -3355,6 +3355,48 @@ function abrirWhatsApp(numero, mensagem, janelaPreAberta){
     } else {
         window.open(url, "_blank");
     }
+}
+
+// Abre a aba do WhatsApp já no clique do usuário (pra não ser bloqueada
+// pelo navegador depois de esperar a nuvem/rede) e preenche com uma tela
+// de carregamento simples, no lugar da tela branca "feia" que ficava
+// enquanto a mensagem era preparada.
+function abrirJanelaCarregandoWhatsApp(){
+    let janela = window.open("", "_blank");
+    if(!janela) return null;
+    try{
+        janela.document.write(`<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8">
+<title>Preparando mensagem...</title>
+<style>
+  html,body{height:100%;margin:0;}
+  body{
+    display:flex;align-items:center;justify-content:center;
+    background:#0b141a;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+  }
+  .caixa{ text-align:center; color:#e9edef; }
+  .spinner{
+    width:42px;height:42px;margin:0 auto 18px;
+    border:4px solid rgba(37,211,102,0.25);
+    border-top-color:#25D366;
+    border-radius:50%;
+    animation:girar 0.8s linear infinite;
+  }
+  @keyframes girar{ to{ transform:rotate(360deg); } }
+  .titulo{ font-size:16px; font-weight:600; margin-bottom:6px; }
+  .sub{ font-size:13px; color:#8696a0; }
+</style></head>
+<body>
+  <div class="caixa">
+    <div class="spinner"></div>
+    <div class="titulo">Preparando mensagem no WhatsApp...</div>
+    <div class="sub">Só um instante</div>
+  </div>
+</body></html>`);
+        janela.document.close();
+    }catch(e){ /* se der erro ao escrever, segue com a aba mesmo assim */ }
+    return janela;
 }
 
 async function gerarLinkEncurtadoCliente(cliente){
