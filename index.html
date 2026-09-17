@@ -6540,9 +6540,13 @@ function congelarLucroHistoricoAntigo(){
    Guarda em nuvem uma cópia dos mesmos dados do "Backup Completo"
    (clientes, planos, servidores, configurações, histórico de lucro e
    preferências). Sempre que qualquer uma dessas chaves é salva neste
-   aparelho, o envio para a nuvem é agendado automaticamente — não é
-   preciso clicar em nada. Ao abrir o painel (ou clicar em "Sincronizar
-   Agora"), os dados mais recentes da nuvem são buscados e aplicados aqui.
+   aparelho, o envio (push) para a nuvem é agendado automaticamente para
+   5 segundos depois — não é preciso clicar em nada. Já a BUSCA (pull) de
+   dados da nuvem NÃO é mais automática — só acontece quando o usuário
+   clica em "Sincronizar Agora" nas Configurações (ou logo após colar/salvar
+   um novo link ali). Isso evita o conflito de uma busca automática chegar
+   bem na hora em que uma renovação de cliente está sendo processada no
+   Dashboard e sobrescrever dados locais recém-salvos.
 */
 const CHAVE_SHEETS_URL_NUVEM = "gestorClientes_sheetsUrl";
 // Se quiser que todo mundo que abrir este mesmo arquivo já sincronize
@@ -6552,6 +6556,8 @@ const CHAVE_SHEETS_URL_NUVEM = "gestorClientes_sheetsUrl";
 const SHEETS_URL_PADRAO_NUVEM = "https://script.google.com/macros/s/AKfycbw3KlptIAZvw5Tx-EwLu8_Pw2qXDxQSCijkyvsrhF8lbXXiHetbCN1rDF7pgPrxx65J/exec";
 // Chaves do localStorage que, ao serem salvas, disparam o envio para a nuvem.
 const CHAVES_SINCRONIZAVEIS_NUVEM = ["clientes","planos","servidores","configuracoes","historicoLucro","servidorPadrao","itensPorPagina","modoCompacto","diasLembreteDashboard"];
+// Tempo de espera (debounce) após uma alteração local antes de enviar para a nuvem.
+const INTERVALO_PUSH_NUVEM_MS = 5000;
 
 let sincronizandoNuvemAgora = false;
 let ultimaSincronizacaoNuvemOk = null;
@@ -6628,7 +6634,7 @@ function desconectarNuvem(){
 
 function agendarNuvemPush(){
     clearTimeout(timerAgendaPushNuvem);
-    timerAgendaPushNuvem = setTimeout(nuvemPush, 1500);
+    timerAgendaPushNuvem = setTimeout(nuvemPush, INTERVALO_PUSH_NUVEM_MS);
 }
 
 // Monta o mesmo "pacote" de dados usado no Backup Completo (exportarSistema),
@@ -6700,18 +6706,18 @@ function mensagemErroSincronizacaoNuvem(e){
 }
 
 // Busca os dados mais recentes da nuvem e aplica neste aparelho.
+// Só é chamada manualmente (botão "Sincronizar Agora" ou ao salvar um novo
+// link nas Configurações) — não há mais busca automática/periódica.
 async function nuvemPull(avisar){
     const url = getSheetsUrlNuvem();
     if(!url){ atualizarStatusSincronizacaoNuvem(); return false; }
     if(sincronizandoNuvemAgora) return false;
-    reiniciarContadorNuvem(); // toda busca real reinicia a contagem visual
 
-    // Se existe um envio local agendado (debounce de 1.5s após qualquer
+    // Se existe um envio local agendado (debounce de 5s após qualquer
     // registro — novo cliente, renovação, etc.), envia ele PRIMEIRO. Sem
     // isso, um pull podia chegar antes desse envio e trazer da nuvem uma
     // versão mais antiga, sobrescrevendo/perdendo o que acabou de ser
-    // registrado neste aparelho (a causa do registro "invertido" no
-    // Histórico de Lucro).
+    // registrado neste aparelho.
     if(timerAgendaPushNuvem){
         clearTimeout(timerAgendaPushNuvem);
         timerAgendaPushNuvem = null;
@@ -6778,8 +6784,9 @@ async function nuvemPull(avisar){
     }
 }
 
-// Envia os dados deste aparelho para a nuvem (disparado automaticamente a
-// cada alteração salva localmente — ver interceptarLocalStorageParaNuvem).
+// Envia os dados deste aparelho para a nuvem (disparado automaticamente,
+// com 5s de debounce, a cada alteração salva localmente — ver
+// interceptarLocalStorageParaNuvem).
 async function nuvemPush(){
     const url = getSheetsUrlNuvem();
     if(!url) return;
@@ -6815,51 +6822,12 @@ function sincronizarNuvemManual(){
     nuvemPull(true);
 }
 
-/* ══════════════════════════════════════════════
-   CONTADOR VISUAL DA PRÓXIMA SINCRONIZAÇÃO
-   Mostra, num cantinho discreto da tela, quantos segundos faltam para a
-   próxima busca automática de dados na nuvem (a cada 60s). Puramente
-   visual — não interfere na sincronização em si.
-══════════════════════════════════════════════ */
-const SEGUNDOS_ENTRE_SINCRONIZACOES_NUVEM = 60;
-let segundosParaProximaSincronizacaoNuvem = SEGUNDOS_ENTRE_SINCRONIZACOES_NUVEM;
-
-function atualizarTextoContadorNuvem(){
-    const el = document.getElementById("nuvemContadorMini");
-    if(!el) return;
-    if(!getSheetsUrlNuvem()){ el.style.display = "none"; return; }
-    el.style.display = "block";
-    el.textContent = sincronizandoNuvemAgora
-        ? "☁️ sincronizando…"
-        : `☁️ próx. sinc. em ${segundosParaProximaSincronizacaoNuvem}s`;
-}
-
-// Zera a contagem (chamado sempre que uma sincronização acabou de
-// acontecer, manual ou automática), pra o número na tela continuar
-// refletindo o tempo real até a próxima busca.
-function reiniciarContadorNuvem(){
-    segundosParaProximaSincronizacaoNuvem = SEGUNDOS_ENTRE_SINCRONIZACOES_NUVEM;
-    atualizarTextoContadorNuvem();
-}
-
-function iniciarContadorNuvem(){
-    atualizarTextoContadorNuvem();
-    setInterval(() => {
-        segundosParaProximaSincronizacaoNuvem--;
-        if(segundosParaProximaSincronizacaoNuvem <= 0){
-            segundosParaProximaSincronizacaoNuvem = SEGUNDOS_ENTRE_SINCRONIZACOES_NUVEM;
-            nuvemPull(false);
-        }
-        atualizarTextoContadorNuvem();
-    }, 1000);
-}
-
-// Força o envio imediato para a nuvem (em vez de esperar o debounce de
-// 1.5s) e só retorna quando ele terminar — usado antes de disparar a
-// mensagem de renovação no WhatsApp, para garantir que a renovação já
-// esteja salva na nuvem antes de seguir para a mensagem. Se não houver
-// link de nuvem configurado, ou se o envio falhar, segue em frente do
-// mesmo jeito (a mensagem não pode ficar travada por causa da rede).
+// Força o envio imediato para a nuvem (em vez de esperar o debounce de 5s)
+// e só retorna quando ele terminar — usado antes de disparar a mensagem de
+// renovação no WhatsApp, para garantir que a renovação já esteja salva na
+// nuvem antes de seguir para a mensagem. Se não houver link de nuvem
+// configurado, ou se o envio falhar, segue em frente do mesmo jeito (a
+// mensagem não pode ficar travada por causa da rede).
 async function forcarSincronizacaoNuvemAntesDeMensagem(){
     if(!getSheetsUrlNuvem()) return;
     clearTimeout(timerAgendaPushNuvem);
@@ -6894,12 +6862,11 @@ document.addEventListener("DOMContentLoaded", function(){
         verificarAlteracoesConfiguracao();
         // Resumo diário (leve atraso para dados já estarem prontos)
         setTimeout(verificarResumoDiario, 400);
-        // Sincronização em nuvem: busca os dados mais recentes assim que o
-        // painel abre e depois verifica novamente a cada 60 segundos, para
-        // pegar alterações feitas em outro aparelho.
+        // Sincronização em nuvem: NÃO busca dados automaticamente ao abrir.
+        // A busca (pull) só acontece manualmente, pelas Configurações
+        // ("Sincronizar Agora" ou ao salvar um novo link). O envio (push)
+        // é agendado automaticamente 5s após cada alteração local.
         atualizarStatusSincronizacaoNuvem();
-        if(getSheetsUrlNuvem()) setTimeout(() => nuvemPull(false), 600);
-        iniciarContadorNuvem();
     } catch(erro){
         console.log(erro);
         mostrarAlerta("Erro ao carregar sistema: " + erro.message, "erro");
@@ -7250,7 +7217,6 @@ document.addEventListener("DOMContentLoaded", function(){
 <!-- Contador minúsculo mostrando quanto falta para a próxima busca
      automática de dados na nuvem (a cada 60s). Só some se não houver
      nenhum link de nuvem configurado. -->
-<div id="nuvemContadorMini" style="display:none;position:fixed;bottom:4px;right:6px;font-size:9px;line-height:1;color:#64748b;opacity:0.55;z-index:9999;pointer-events:none;user-select:none;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;"></div>
 </body>
 
 </html>
