@@ -1940,7 +1940,7 @@ textarea{
                     </div>
                     <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
                         <button class="btn-add" style="flex:1;" onclick="salvarUrlSheetsUI()">💾 Salvar Link</button>
-                        <button class="btn-edit" style="flex:1;" onclick="sincronizarNuvemManual()">🔄 Sincronizar Agora</button>
+                        <button class="btn-edit" style="flex:1;" onclick="sincronizarNuvemManual()">⬇️ Puxar da Nuvem</button>
                     </div>
                     <button class="btn-delete" style="width:100%; margin-top:8px;" onclick="desconectarNuvem()">🔌 Desconectar da Nuvem</button>
                     <div id="statusSincronizacaoNuvem" style="color:#94a3b8; font-size:12px; margin-top:10px;"></div>
@@ -6543,7 +6543,7 @@ function congelarLucroHistoricoAntigo(){
    aparelho, o envio (push) para a nuvem é agendado automaticamente para
    5 segundos depois — não é preciso clicar em nada. Já a BUSCA (pull) de
    dados da nuvem NÃO é mais automática — só acontece quando o usuário
-   clica em "Sincronizar Agora" nas Configurações (ou logo após colar/salvar
+   clica em "Puxar da Nuvem" nas Configurações (ou logo após colar/salvar
    um novo link ali). Isso evita o conflito de uma busca automática chegar
    bem na hora em que uma renovação de cliente está sendo processada no
    Dashboard e sobrescrever dados locais recém-salvos.
@@ -6706,7 +6706,7 @@ function mensagemErroSincronizacaoNuvem(e){
 }
 
 // Busca os dados mais recentes da nuvem e aplica neste aparelho.
-// Só é chamada manualmente (botão "Sincronizar Agora" ou ao salvar um novo
+// Só é chamada manualmente (botão "Puxar da Nuvem" ou ao salvar um novo
 // link nas Configurações) — não há mais busca automática/periódica.
 async function nuvemPull(avisar){
     const url = getSheetsUrlNuvem();
@@ -6864,7 +6864,7 @@ document.addEventListener("DOMContentLoaded", function(){
         setTimeout(verificarResumoDiario, 400);
         // Sincronização em nuvem: NÃO busca dados automaticamente ao abrir.
         // A busca (pull) só acontece manualmente, pelas Configurações
-        // ("Sincronizar Agora" ou ao salvar um novo link). O envio (push)
+        // ("Puxar da Nuvem" ou ao salvar um novo link). O envio (push)
         // é agendado automaticamente 5s após cada alteração local.
         atualizarStatusSincronizacaoNuvem();
     } catch(erro){
@@ -7213,10 +7213,6 @@ document.addEventListener("DOMContentLoaded", function(){
         </div>
     </div>
 </div>
-
-<!-- Contador minúsculo mostrando quanto falta para a próxima busca
-     automática de dados na nuvem (a cada 60s). Só some se não houver
-     nenhum link de nuvem configurado. -->
 </body>
 
 </html>
