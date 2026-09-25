@@ -4025,6 +4025,33 @@ let acaoConfirmacaoPendente = null;
 /* ===== HISTÓRICO DE MOVIMENTOS DO LUCRO MENSAL ===== */
 let historicoLucro = JSON.parse(localStorage.getItem("historicoLucro")) || [];
 
+// Ordena uma lista de movimentos de lucro por DIA (ignorando o horário
+// salvo em cada um) e, dentro do mesmo dia, preserva a ordem em que eles
+// foram realmente registrados no histórico (ordem de inserção no array).
+//
+// Por quê: uma renovação sem horário de pagamento customizado grava meio-dia
+// (12h) fixo naquele dia (ver registrarMovimentoLucro), enquanto um cadastro
+// novo de cliente grava o horário real do momento em que foi feito. Se dois
+// lançamentos do mesmo dia fossem comparados pelo horário salvo, uma
+// renovação feita à noite podia aparecer como "mais antiga" que um cadastro
+// feito de manhã do mesmo dia — o que é o oposto do que realmente aconteceu.
+// Comparando só o dia (e usando a ordem de inserção como critério de
+// desempate) o lançamento mais recente sempre fica por cima, mesmo quando
+// os dois são do mesmo dia.
+function ordenarMovimentosLucro(lista, ordem){
+    let comIndice = lista.map((mov, indice) => ({ mov, indice }));
+    comIndice.sort((a, b) => {
+        let diaA = new Date(a.mov.data); diaA.setHours(0,0,0,0);
+        let diaB = new Date(b.mov.data); diaB.setHours(0,0,0,0);
+        let diffDia = diaA.getTime() - diaB.getTime();
+        if(diffDia !== 0) return ordem === "desc" ? -diffDia : diffDia;
+        // Mesmo dia: quem foi registrado depois (índice maior no array)
+        // conta como mais recente.
+        return ordem === "desc" ? (b.indice - a.indice) : (a.indice - b.indice);
+    });
+    return comIndice.map(item => item.mov);
+}
+
 function registrarMovimentoLucro(nomeCliente, valor, idOperacao, dataMovimento){
     valor = Number(valor) || 0;
     if(valor === 0) return;
@@ -4546,7 +4573,8 @@ function calcularLucroPeriodo(){
     let movimentos = historicoLucro.filter(mov => {
         let d = new Date(mov.data);
         return d >= inicio && d <= fim;
-    }).sort((a,b) => new Date(b.data) - new Date(a.data));
+    });
+    movimentos = ordenarMovimentosLucro(movimentos, "desc");
 
     let soma = movimentos.reduce((acc, mov) => acc + (Number(mov.valor) || 0), 0);
 
@@ -4610,7 +4638,8 @@ function montarRelatorioPDF(){
     let movimentos = historicoLucro.filter(mov => {
         let d = new Date(mov.data);
         return d >= inicio && d <= fim;
-    }).sort((a,b) => new Date(a.data) - new Date(b.data));
+    });
+    movimentos = ordenarMovimentosLucro(movimentos, "asc");
 
     if(movimentos.length === 0){
         mostrarAlerta("Nenhum movimento de lucro encontrado nesse período.", "aviso");
@@ -6073,7 +6102,7 @@ function renderizarHistoricoLucro(){
     });
 
     // ordena do mais antigo para o mais novo, para exibição consistente
-    movimentosMes.sort((a,b) => new Date(a.data) - new Date(b.data));
+    movimentosMes = ordenarMovimentosLucro(movimentosMes, "asc");
 
     // Recalcula o "saldo anterior" de cada linha aqui, na hora de exibir,
     // somando os valores em ordem cronológica — em vez de confiar no campo
