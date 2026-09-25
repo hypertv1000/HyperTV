@@ -2141,9 +2141,10 @@ function previsualizarMensagem(tipo){
     const template = (campo && campo.value.trim()) ? campo.value : padraoPorTipo[tipo];
 
     // No Lembrete e na Cobrança, {valor} já sai formatado (com "R$" e, se
-    // houver desconto, com o riscado + linha do desconto embutidos).
-    // Na Ativação e na Renovação, {valor} é só o número puro, sem desconto.
-    const valorExemplo = (tipo === "lembrete" || tipo === "cobranca")
+    // houver desconto, com o riscado). Na Ativação e na Renovação, {valor}
+    // é só o número puro, sem desconto.
+    const temDescontoExemplo = (tipo === "lembrete" || tipo === "cobranca");
+    const valorExemplo = temDescontoExemplo
         ? formatarValorComDesconto(30, 5)
         : "30,00";
 
@@ -2160,8 +2161,10 @@ function previsualizarMensagem(tipo){
         pix_banco: (document.getElementById("pixBanco").value || "Seu Banco")
     };
     dadosExemplo.areacliente = linkExemploAtivado ? `*🔗 Sua área do cliente:*\n${dadosExemplo.link}` : "";
+    dadosExemplo.__desconto__ = temDescontoExemplo ? "*🎁 Desconto aplicado:* R$ 5,00" : "";
 
-    let mensagem = preencherTemplate(template, dadosExemplo);
+    let templatePreview = temDescontoExemplo ? inserirPontoDesconto(template) : template;
+    let mensagem = preencherTemplate(templatePreview, dadosExemplo);
     // Se {areacliente} (ou {link}) virou "" por estar desativado, evita
     // deixar linha(s) em branco sobrando no meio/fim da mensagem.
     mensagem = mensagem.replace(/\n{3,}/g, "\n\n").trimEnd();
@@ -2407,16 +2410,36 @@ linkM3U ? `\n\n🔗 Link M3U:\n${linkM3U}` : ""
 }
 
 // Monta o texto da variável {valor} para Lembrete/Cobrança: com desconto
-// pendente, mostra o valor original riscado + valor final, e logo abaixo
-// a linha do desconto aplicado. Sem desconto, mostra só o valor normal.
+// pendente, mostra o valor original riscado + valor final. Sem desconto,
+// mostra só o valor normal. A linha "🎁 Desconto aplicado" NÃO fica mais
+// embutida aqui dentro — ver inserirLinhaDesconto() abaixo, que a coloca
+// como um parágrafo novo, sempre depois da frase inteira (mesmo que
+// {status} venha na mesma linha que {valor}, logo depois dele).
 function formatarValorComDesconto(valorOriginal, desconto){
     let final = Math.max(0, valorOriginal - desconto);
     let textoFinal = final.toFixed(2).replace(".",",");
     if(desconto > 0){
         let textoOriginal = valorOriginal.toFixed(2).replace(".",",");
-        return `~R$ ${textoOriginal}~ R$ ${textoFinal}\n*🎁 Desconto aplicado:* R$ ${desconto.toFixed(2).replace(".",",")}`;
+        return `~R$ ${textoOriginal}~ R$ ${textoFinal}`;
     }
     return `R$ ${textoFinal}`;
+}
+
+// Prepara o modelo (ainda com os placeholders, antes de preencherTemplate)
+// para receber a linha do desconto como um parágrafo à parte: acha a linha
+// que contém {valor} (onde antes o desconto ficava embutido) e insere logo
+// abaixo dela, como uma nova linha em branco + {__desconto__} — isso
+// garante que a linha do desconto sempre apareça DEPOIS da frase inteira
+// (incluindo {status}, se estiver na mesma linha que {valor}), nunca no
+// meio dela. Se {valor} não existir no modelo, insere depois da linha de
+// {status}; se nenhum dos dois existir, insere no fim do modelo.
+function inserirPontoDesconto(template){
+    let linhas = (template || "").split("\n");
+    let indiceAlvo = linhas.findIndex(l => l.includes("{valor}"));
+    if(indiceAlvo === -1) indiceAlvo = linhas.findIndex(l => l.includes("{status}"));
+    if(indiceAlvo === -1){ return (template || "") + "\n\n{__desconto__}"; }
+    linhas.splice(indiceAlvo + 1, 0, "", "{__desconto__}");
+    return linhas.join("\n");
 }
 
 async function enviarMensagemVencido(cliente){
@@ -2435,12 +2458,14 @@ async function enviarMensagemVencido(cliente){
     let descontoCobranca = cliente.descontoIndicacao || 0;
 
     let template = (config.modeloCobranca && config.modeloCobranca.trim()) ? config.modeloCobranca : MODELO_COBRANCA_PADRAO;
+    if(descontoCobranca > 0) template = inserirPontoDesconto(template);
     let linkCliente = await gerarLinkEncurtadoCliente(cliente);
     let mensagem = preencherTemplate(template, {
         nome: primeiroNome(cliente.nome),
         plano: (cliente.plano || "").split(" - ")[0],
         valor: formatarValorComDesconto(valorNumericoCobranca, descontoCobranca),
         desconto: descontoCobranca > 0 ? descontoCobranca.toFixed(2).replace(".",",") : "",
+        __desconto__: descontoCobranca > 0 ? `*🎁 Desconto aplicado:* R$ ${descontoCobranca.toFixed(2).replace(".",",")}` : "",
         dias: dias,
         saudacao: saudacao,
         status: textoVencimentoMsg,
@@ -6179,12 +6204,14 @@ async function enviarLembrete(index){
 
     const saudacao = saudacaoBrasileira();
     let template = (config.modeloLembrete && config.modeloLembrete.trim()) ? config.modeloLembrete : MODELO_LEMBRETE_PADRAO;
+    if(descontoLembrete > 0) template = inserirPontoDesconto(template);
     let linkCliente = await gerarLinkEncurtadoCliente(cliente);
     let mensagem = preencherTemplate(template, {
         nome: nome,
         plano: (plano || "").split(" - ")[0],
         valor: formatarValorComDesconto(valorNumericoLembrete, descontoLembrete),
         desconto: descontoLembrete > 0 ? descontoLembrete.toFixed(2).replace(".",",") : "",
+        __desconto__: descontoLembrete > 0 ? `*🎁 Desconto aplicado:* R$ ${descontoLembrete.toFixed(2).replace(".",",")}` : "",
         saudacao: saudacao,
         emoji: emoji,
         status: textoExpiracao,
