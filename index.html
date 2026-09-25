@@ -3177,10 +3177,12 @@ async function renovarCliente(){
         renderizar();
         atualizarDashboard();
         fecharModalRenovacao();
-        // Só dispara a mensagem depois que a renovação foi enviada para a
-        // nuvem — assim, se o app fechar logo em seguida (é comum o cliente
-        // já sair para o WhatsApp), os créditos não ficam só no aparelho.
-        await forcarSincronizacaoNuvemAntesDeMensagem();
+        // Tenta enviar a renovação para a nuvem antes de abrir a mensagem —
+        // mas só espera até TIMEOUT_PUSH_NUVEM_MS. Depois disso a mensagem
+        // abre mesmo assim (o envio continua em segundo plano sozinho), pra
+        // não deixar a aba do WhatsApp parada esperando a nuvem por vários
+        // segundos.
+        await comLimiteDeTempo(forcarSincronizacaoNuvemAntesDeMensagem(), TIMEOUT_PUSH_NUVEM_MS);
         enviarMensagemRenovacaoRevenda({ ...cliente, nome: nomeLucro }, creditos, valorTotal, janelaWhatsRenov);
         return;
     }
@@ -3253,11 +3255,18 @@ async function renovarCliente(){
     // O envio para a nuvem e a geração do link encurtado da área do
     // cliente não dependem um do outro — rodando os dois ao mesmo tempo
     // (em vez de um depois do outro) a espera total fica limitada ao mais
-    // lento dos dois, não à soma dos dois. A mensagem só é aberta depois
-    // que a renovação já estiver garantida na nuvem.
+    // lento dos dois, não à soma dos dois. Cada um tem um tempo máximo de
+    // espera (comLimiteDeTempo): passado esse tempo, a mensagem abre mesmo
+    // assim — o envio para a nuvem continua sozinho em segundo plano, e o
+    // link (se o encurtador não respondeu a tempo) cai para a versão
+    // completa/não encurtada, sem precisar esperar mais.
     let [, linkClienteRenov] = await Promise.all([
-        forcarSincronizacaoNuvemAntesDeMensagem(),
-        gerarLinkEncurtadoCliente(clientes[clienteRenovacao])
+        comLimiteDeTempo(forcarSincronizacaoNuvemAntesDeMensagem(), TIMEOUT_PUSH_NUVEM_MS),
+        comLimiteDeTempo(
+            gerarLinkEncurtadoCliente(clientes[clienteRenovacao]),
+            TIMEOUT_ENCURTADOR_MS,
+            obterLinkClienteCompleto(clientes[clienteRenovacao])
+        )
     ]);
 
     // A mensagem de renovação ainda enxerga o desconto pendente do cliente
@@ -6822,18 +6831,43 @@ function sincronizarNuvemManual(){
     nuvemPull(true);
 }
 
-// Força o envio imediato para a nuvem (em vez de esperar o debounce de 5s)
-// e só retorna quando ele terminar — usado antes de disparar a mensagem de
-// renovação no WhatsApp, para garantir que a renovação já esteja salva na
-// nuvem antes de seguir para a mensagem. Se não houver link de nuvem
-// configurado, ou se o envio falhar, segue em frente do mesmo jeito (a
-// mensagem não pode ficar travada por causa da rede).
+// Corre uma Promise contra um "relógio": devolve o que responder primeiro.
+// Se o tempo limite vencer antes da promessa original, devolve valorPadrao
+// e SEGUE em frente — a promessa original não é cancelada, continua
+// rodando sozinha em segundo plano até terminar (ela só deixa de ser
+// esperada). Usado para nunca deixar a tela travada esperando a nuvem ou
+// o encurtador de link por tempo indefinido.
+function comLimiteDeTempo(promessa, ms, valorPadrao){
+    return Promise.race([
+        promessa,
+        new Promise(resolve => setTimeout(() => resolve(valorPadrao), ms))
+    ]);
+}
+
+// Força o envio imediato para a nuvem (em vez de esperar o debounce de 5s).
+// Usada antes de disparar a mensagem de renovação no WhatsApp, para tentar
+// garantir que a renovação já esteja salva na nuvem antes de seguir para a
+// mensagem. Mas essa espera tem um limite (ver TIMEOUT_PUSH_NUVEM_MS,
+// aplicado por quem chama esta função com comLimiteDeTempo): se a nuvem
+// (Google Apps Script) demorar mais que isso — o que é comum, às vezes
+// 5-15s —, a mensagem do WhatsApp já segue em frente mesmo assim, e o
+// envio continua rodando sozinho em segundo plano até terminar. Se não
+// houver link de nuvem configurado, ou se o envio falhar, também segue em
+// frente do mesmo jeito (a mensagem não pode ficar travada por causa da
+// rede).
 async function forcarSincronizacaoNuvemAntesDeMensagem(){
     if(!getSheetsUrlNuvem()) return;
     clearTimeout(timerAgendaPushNuvem);
     timerAgendaPushNuvem = null;
     try{ await nuvemPush(); }catch(e){ /* já tratado dentro de nuvemPush */ }
 }
+// Tempo máximo (ms) que a tela espera pela confirmação da nuvem antes de
+// abrir o WhatsApp mesmo assim. Aumente se sua internet for muito lenta e
+// você preferir mais garantia; diminua para abrir o WhatsApp ainda mais rápido.
+const TIMEOUT_PUSH_NUVEM_MS = 2500;
+// Tempo máximo (ms) esperando o encurtador de link (TinyURL/is.gd) antes de
+// usar o link completo (não encurtado) como retorno rápido.
+const TIMEOUT_ENCURTADOR_MS = 1500;
 
 document.addEventListener("DOMContentLoaded", function(){
     try{
