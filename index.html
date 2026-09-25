@@ -1940,8 +1940,16 @@ textarea{
                     </div>
                     <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
                         <button class="btn-add" style="flex:1;" onclick="salvarUrlSheetsUI()">💾 Salvar Link</button>
+                    </div>
+                    <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+                        <button class="btn-historico-lucro" style="flex:1;" onclick="enviarNuvemManual()">⬆️ Enviar à Nuvem</button>
                         <button class="btn-edit" style="flex:1;" onclick="sincronizarNuvemManual()">⬇️ Puxar da Nuvem</button>
                     </div>
+                    <p style="color:#94a3b8; font-size:12px; margin-top:8px; line-height:1.4;">
+                        ℹ️ Renovar e Lembrar enviam para a nuvem automaticamente. Qualquer outra alteração
+                        (edição, exclusão, cadastro, configurações, etc.) só é enviada quando você tocar em
+                        "Enviar à Nuvem".
+                    </p>
                     <button class="btn-delete" style="width:100%; margin-top:8px;" onclick="desconectarNuvem()">🔌 Desconectar da Nuvem</button>
                     <div id="statusSincronizacaoNuvem" style="color:#94a3b8; font-size:12px; margin-top:10px;"></div>
                 </div>
@@ -2141,10 +2149,9 @@ function previsualizarMensagem(tipo){
     const template = (campo && campo.value.trim()) ? campo.value : padraoPorTipo[tipo];
 
     // No Lembrete e na Cobrança, {valor} já sai formatado (com "R$" e, se
-    // houver desconto, com o riscado). Na Ativação e na Renovação, {valor}
-    // é só o número puro, sem desconto.
-    const temDescontoExemplo = (tipo === "lembrete" || tipo === "cobranca");
-    const valorExemplo = temDescontoExemplo
+    // houver desconto, com o riscado + linha do desconto embutidos).
+    // Na Ativação e na Renovação, {valor} é só o número puro, sem desconto.
+    const valorExemplo = (tipo === "lembrete" || tipo === "cobranca")
         ? formatarValorComDesconto(30, 5)
         : "30,00";
 
@@ -2161,10 +2168,8 @@ function previsualizarMensagem(tipo){
         pix_banco: (document.getElementById("pixBanco").value || "Seu Banco")
     };
     dadosExemplo.areacliente = linkExemploAtivado ? `*🔗 Sua área do cliente:*\n${dadosExemplo.link}` : "";
-    dadosExemplo.__desconto__ = temDescontoExemplo ? "*🎁 Desconto aplicado:* R$ 5,00" : "";
 
-    let templatePreview = temDescontoExemplo ? inserirPontoDesconto(template) : template;
-    let mensagem = preencherTemplate(templatePreview, dadosExemplo);
+    let mensagem = preencherTemplate(template, dadosExemplo);
     // Se {areacliente} (ou {link}) virou "" por estar desativado, evita
     // deixar linha(s) em branco sobrando no meio/fim da mensagem.
     mensagem = mensagem.replace(/\n{3,}/g, "\n\n").trimEnd();
@@ -2410,36 +2415,16 @@ linkM3U ? `\n\n🔗 Link M3U:\n${linkM3U}` : ""
 }
 
 // Monta o texto da variável {valor} para Lembrete/Cobrança: com desconto
-// pendente, mostra o valor original riscado + valor final. Sem desconto,
-// mostra só o valor normal. A linha "🎁 Desconto aplicado" NÃO fica mais
-// embutida aqui dentro — ver inserirLinhaDesconto() abaixo, que a coloca
-// como um parágrafo novo, sempre depois da frase inteira (mesmo que
-// {status} venha na mesma linha que {valor}, logo depois dele).
+// pendente, mostra o valor original riscado + valor final, e logo abaixo
+// a linha do desconto aplicado. Sem desconto, mostra só o valor normal.
 function formatarValorComDesconto(valorOriginal, desconto){
     let final = Math.max(0, valorOriginal - desconto);
     let textoFinal = final.toFixed(2).replace(".",",");
     if(desconto > 0){
         let textoOriginal = valorOriginal.toFixed(2).replace(".",",");
-        return `~R$ ${textoOriginal}~ R$ ${textoFinal}`;
+        return `~R$ ${textoOriginal}~ R$ ${textoFinal}\n*🎁 Desconto aplicado:* R$ ${desconto.toFixed(2).replace(".",",")}`;
     }
     return `R$ ${textoFinal}`;
-}
-
-// Prepara o modelo (ainda com os placeholders, antes de preencherTemplate)
-// para receber a linha do desconto como um parágrafo à parte: acha a linha
-// que contém {valor} (onde antes o desconto ficava embutido) e insere logo
-// abaixo dela, como uma nova linha em branco + {__desconto__} — isso
-// garante que a linha do desconto sempre apareça DEPOIS da frase inteira
-// (incluindo {status}, se estiver na mesma linha que {valor}), nunca no
-// meio dela. Se {valor} não existir no modelo, insere depois da linha de
-// {status}; se nenhum dos dois existir, insere no fim do modelo.
-function inserirPontoDesconto(template){
-    let linhas = (template || "").split("\n");
-    let indiceAlvo = linhas.findIndex(l => l.includes("{valor}"));
-    if(indiceAlvo === -1) indiceAlvo = linhas.findIndex(l => l.includes("{status}"));
-    if(indiceAlvo === -1){ return (template || "") + "\n\n{__desconto__}"; }
-    linhas.splice(indiceAlvo + 1, 0, "", "{__desconto__}");
-    return linhas.join("\n");
 }
 
 async function enviarMensagemVencido(cliente){
@@ -2458,14 +2443,12 @@ async function enviarMensagemVencido(cliente){
     let descontoCobranca = cliente.descontoIndicacao || 0;
 
     let template = (config.modeloCobranca && config.modeloCobranca.trim()) ? config.modeloCobranca : MODELO_COBRANCA_PADRAO;
-    if(descontoCobranca > 0) template = inserirPontoDesconto(template);
     let linkCliente = await gerarLinkEncurtadoCliente(cliente);
     let mensagem = preencherTemplate(template, {
         nome: primeiroNome(cliente.nome),
         plano: (cliente.plano || "").split(" - ")[0],
         valor: formatarValorComDesconto(valorNumericoCobranca, descontoCobranca),
         desconto: descontoCobranca > 0 ? descontoCobranca.toFixed(2).replace(".",",") : "",
-        __desconto__: descontoCobranca > 0 ? `*🎁 Desconto aplicado:* R$ ${descontoCobranca.toFixed(2).replace(".",",")}` : "",
         dias: dias,
         saudacao: saudacao,
         status: textoVencimentoMsg,
@@ -6162,10 +6145,10 @@ function foiLembrado(whatsapp){
     return localStorage.getItem("lembrete_" + whatsapp) === hoje;
 }
 
-function enviarLembreteComMarca(index){
+async function enviarLembreteComMarca(index){
     let cliente = clientes[index];
     if(!cliente) return;
-    enviarLembrete(index);
+    await enviarLembrete(index);
     registrarLembrete(cliente.whatsapp);
     atualizarDashboard();
 }
@@ -6204,14 +6187,12 @@ async function enviarLembrete(index){
 
     const saudacao = saudacaoBrasileira();
     let template = (config.modeloLembrete && config.modeloLembrete.trim()) ? config.modeloLembrete : MODELO_LEMBRETE_PADRAO;
-    if(descontoLembrete > 0) template = inserirPontoDesconto(template);
     let linkCliente = await gerarLinkEncurtadoCliente(cliente);
     let mensagem = preencherTemplate(template, {
         nome: nome,
         plano: (plano || "").split(" - ")[0],
         valor: formatarValorComDesconto(valorNumericoLembrete, descontoLembrete),
         desconto: descontoLembrete > 0 ? descontoLembrete.toFixed(2).replace(".",",") : "",
-        __desconto__: descontoLembrete > 0 ? `*🎁 Desconto aplicado:* R$ ${descontoLembrete.toFixed(2).replace(".",",")}` : "",
         saudacao: saudacao,
         emoji: emoji,
         status: textoExpiracao,
@@ -6224,6 +6205,11 @@ async function enviarLembrete(index){
     // Evita linha(s) em branco sobrando quando {areacliente}/{link} vier vazio.
     mensagem = mensagem.replace(/\n{3,}/g, "\n\n").trimEnd();
     window.open(`https://wa.me/${whatsapp}?text=${encodeURIComponent(mensagem)}`, "_blank");
+
+    // "Lembrar" é uma das duas ações (junto com "Renovar") que envia para a
+    // nuvem automaticamente. Não trava a tela esperando resposta, já que a
+    // aba do WhatsApp acima já foi aberta — o envio segue em segundo plano.
+    forcarSincronizacaoNuvemAntesDeMensagem();
 }
 
 function salvarConfiguracoes(){
@@ -6575,14 +6561,23 @@ function congelarLucroHistoricoAntigo(){
    ═══════════════════════════════════════════════════════════
    Guarda em nuvem uma cópia dos mesmos dados do "Backup Completo"
    (clientes, planos, servidores, configurações, histórico de lucro e
-   preferências). Sempre que qualquer uma dessas chaves é salva neste
-   aparelho, o envio (push) para a nuvem é agendado automaticamente para
-   5 segundos depois — não é preciso clicar em nada. Já a BUSCA (pull) de
-   dados da nuvem NÃO é mais automática — só acontece quando o usuário
-   clica em "Puxar da Nuvem" nas Configurações (ou logo após colar/salvar
-   um novo link ali). Isso evita o conflito de uma busca automática chegar
-   bem na hora em que uma renovação de cliente está sendo processada no
-   Dashboard e sobrescrever dados locais recém-salvos.
+   preferências).
+
+   ENVIO (push) automático: só acontece nas ações de "Renovar" e
+   "Lembrar" (ver renovarCliente() e enviarLembreteComMarca()), logo após
+   o clique — não é preciso fazer nada além disso.
+
+   Qualquer OUTRA alteração local (editar cliente, excluir, cadastrar,
+   mudar configurações, planos, servidores, etc.) fica salva apenas
+   neste aparelho e só é enviada para a nuvem quando o usuário tocar no
+   botão "⬆️ Enviar à Nuvem" nas Configurações (ver enviarNuvemManual()).
+
+   A BUSCA (pull) de dados da nuvem também não é automática — só
+   acontece quando o usuário clica em "Puxar da Nuvem" nas Configurações
+   (ou logo após colar/salvar um novo link ali). Isso evita o conflito de
+   uma busca automática chegar bem na hora em que uma renovação de
+   cliente está sendo processada no Dashboard e sobrescrever dados
+   locais recém-salvos.
 */
 const CHAVE_SHEETS_URL_NUVEM = "gestorClientes_sheetsUrl";
 // Se quiser que todo mundo que abrir este mesmo arquivo já sincronize
@@ -6654,23 +6649,36 @@ function desconectarNuvem(){
     });
 }
 
-// Intercepta localStorage.setItem para as chaves sincronizáveis: qualquer
-// função existente no sistema que já salve clientes/planos/servidores/etc.
-// (são dezenas de lugares no código) passa a agendar automaticamente o
-// envio para a nuvem, sem precisar alterar cada um desses lugares.
-(function interceptarLocalStorageParaNuvem(){
-    const originalSetItem = localStorage.setItem.bind(localStorage);
-    localStorage.setItem = function(chave, valor){
-        originalSetItem(chave, valor);
-        if(CHAVES_SINCRONIZAVEIS_NUVEM.indexOf(chave) !== -1 && !aplicandoDadosDaNuvem){
-            agendarNuvemPush();
-        }
-    };
-})();
+// IMPORTANTE: diferente de versões anteriores, o localStorage.setItem NÃO
+// é mais interceptado para disparar envio automático a cada alteração.
+// O envio (push) para a nuvem agora só acontece em dois casos:
+//   1) Automaticamente, logo após "Renovar" ou "Lembrar" (ver
+//      renovarCliente() e enviarLembrete(), que chamam
+//      forcarSincronizacaoNuvemAntesDeMensagem()).
+//   2) Manualmente, quando o usuário toca em "⬆️ Enviar à Nuvem" nas
+//      Configurações (ver enviarNuvemManual()).
+// Todas as demais alterações (editar, excluir, cadastrar, configurações,
+// planos, servidores, etc.) continuam sendo salvas normalmente neste
+// aparelho (localStorage), só não sobem sozinhas para a nuvem.
 
 function agendarNuvemPush(){
     clearTimeout(timerAgendaPushNuvem);
     timerAgendaPushNuvem = setTimeout(nuvemPush, INTERVALO_PUSH_NUVEM_MS);
+}
+
+// Envio manual: botão "⬆️ Enviar à Nuvem" nas Configurações. Envia agora
+// mesmo (sem esperar debounce) tudo o que estiver salvo neste aparelho —
+// inclusive alterações de edição/exclusão/cadastro que não sobem sozinhas.
+async function enviarNuvemManual(){
+    if(!getSheetsUrlNuvem()){
+        mostrarAlerta("Configure e salve o link do Apps Script antes de enviar para a nuvem.", "aviso");
+        return;
+    }
+    clearTimeout(timerAgendaPushNuvem);
+    timerAgendaPushNuvem = null;
+    atualizarStatusSincronizacaoNuvem("📤 Enviando para a nuvem...");
+    const ok = await nuvemPush();
+    if(ok) mostrarSucesso("📤 Dados enviados para a nuvem!");
 }
 
 // Monta o mesmo "pacote" de dados usado no Backup Completo (exportarSistema),
@@ -6820,12 +6828,14 @@ async function nuvemPull(avisar){
     }
 }
 
-// Envia os dados deste aparelho para a nuvem (disparado automaticamente,
-// com 5s de debounce, a cada alteração salva localmente — ver
-// interceptarLocalStorageParaNuvem).
+// Envia os dados deste aparelho para a nuvem. Disparado automaticamente
+// só por "Renovar" e "Lembrar" (ver forcarSincronizacaoNuvemAntesDeMensagem
+// e agendarNuvemPush chamados nessas duas ações), ou manualmente pelo
+// botão "⬆️ Enviar à Nuvem" (ver enviarNuvemManual). Retorna true/false
+// conforme o envio deu certo ou não.
 async function nuvemPush(){
     const url = getSheetsUrlNuvem();
-    if(!url) return;
+    if(!url) return false;
     // Evita que uma busca da nuvem (nuvemPull, seja automática ou manual)
     // rode ao mesmo tempo que este envio e sobrescreva localmente algo que
     // acabou de ser salvo.
@@ -6843,12 +6853,14 @@ async function nuvemPush(){
         if(data && data.ok){
             ultimaSincronizacaoNuvemOk = new Date();
             atualizarStatusSincronizacaoNuvem();
+            return true;
         } else {
             throw new Error((data && data.erro) || "resposta inválida");
         }
     }catch(e){
         console.error("Falha ao sincronizar (push):", e);
         atualizarStatusSincronizacaoNuvem("⚠️ Salvo neste aparelho, mas falhou ao enviar para a nuvem — " + mensagemErroSincronizacaoNuvem(e).replace("⚠️ ", ""));
+        return false;
     } finally {
         sincronizandoNuvemAgora = false;
     }
