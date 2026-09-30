@@ -1779,7 +1779,9 @@ textarea{
         <input type="text" id="senha" placeholder="Senha">
         <input type="text" id="whatsapp" placeholder="+55 DDD NÚMERO" onblur="limparWhatsapp(this)">
         <select id="plano" onchange="sugerirVencimentoPlano()"></select>
-        <input type="text" id="vencimento" placeholder="Data" onfocus="(this.type='date')" onblur="if(!this.value)this.type='text'">
+        <label for="dataCadastro" style="font-size:12px;color:#94a3b8;display:block;margin:2px 0 -4px;">📅 Data do cadastro</label>
+        <input type="date" id="dataCadastro" onchange="sugerirVencimentoPlano(true)">
+        <input type="text" id="vencimento" placeholder="Data" onfocus="(this.type='date')" onblur="if(!this.value)this.type='text'" oninput="vencimentoEditadoManual=true">
         <input type="number" id="valorRecebido" min="0" step="0.01" placeholder="Valor recebido (opcional, ex: 1º mês RokuTV +R$10)" style="display:none;">
         <input type="number" id="creditosRevenda" min="1" placeholder="Quantidade de créditos (inicial)" oninput="atualizarValorRevendaAdicionar()" style="display:none;">
         <input type="text" id="valorRevendaCalculado" placeholder="Valor (calculado automaticamente)" readonly style="display:none;">
@@ -1940,16 +1942,8 @@ textarea{
                     </div>
                     <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
                         <button class="btn-add" style="flex:1;" onclick="salvarUrlSheetsUI()">💾 Salvar Link</button>
-                    </div>
-                    <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
-                        <button class="btn-historico-lucro" style="flex:1;" onclick="enviarNuvemManual()">⬆️ Enviar à Nuvem</button>
                         <button class="btn-edit" style="flex:1;" onclick="sincronizarNuvemManual()">⬇️ Puxar da Nuvem</button>
                     </div>
-                    <p style="color:#94a3b8; font-size:12px; margin-top:8px; line-height:1.4;">
-                        ℹ️ Renovar e Lembrar enviam para a nuvem automaticamente. Qualquer outra alteração
-                        (edição, exclusão, cadastro, configurações, etc.) só é enviada quando você tocar em
-                        "Enviar à Nuvem".
-                    </p>
                     <button class="btn-delete" style="width:100%; margin-top:8px;" onclick="desconectarNuvem()">🔌 Desconectar da Nuvem</button>
                     <div id="statusSincronizacaoNuvem" style="color:#94a3b8; font-size:12px; margin-top:10px;"></div>
                 </div>
@@ -3818,7 +3812,26 @@ function preencherSelectDuracao(idSelect, idPersonalizado, duracao){
 // Ao escolher um plano no cadastro de cliente, sugere automaticamente o
 // vencimento com base na duração configurada do plano. Planos sem duração
 // definida (revenda) deixam o campo de vencimento em branco.
-function sugerirVencimentoPlano(){
+let vencimentoEditadoManual = false;
+
+// Data de hoje no fuso LOCAL, no formato YYYY-MM-DD (evita o deslocamento
+// de um dia que toISOString() causa à noite em fusos negativos, como o Brasil).
+function hojeISOLocal(){
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+
+// Data do cadastro escolhida no formulário (padrão: hoje).
+function obterDataCadastroISO(){
+    const campo = document.getElementById("dataCadastro");
+    return (campo && campo.value) || hojeISOLocal();
+}
+
+// Se veio da troca da data do cadastro (daData = true) e o vencimento foi
+// digitado manualmente, não sobrescreve o que o usuário escolheu.
+function sugerirVencimentoPlano(daData){
+    if(daData === true && vencimentoEditadoManual) return;
+    vencimentoEditadoManual = false;
     let selectPlano = document.getElementById("plano");
     let campoVencimento = document.getElementById("vencimento");
     if(!selectPlano || !campoVencimento || selectPlano.selectedIndex === -1) return;
@@ -3829,7 +3842,7 @@ function sugerirVencimentoPlano(){
         campoVencimento.type = "text";
         return;
     }
-    let data = adicionarPeriodoData(new Date(), duracao);
+    let data = adicionarPeriodoData(paraDataLocal(obterDataCadastroISO()), duracao);
     campoVencimento.type = "date";
     campoVencimento.value = data.toISOString().split("T")[0];
 }
@@ -4024,33 +4037,6 @@ let acaoConfirmacaoPendente = null;
 
 /* ===== HISTÓRICO DE MOVIMENTOS DO LUCRO MENSAL ===== */
 let historicoLucro = JSON.parse(localStorage.getItem("historicoLucro")) || [];
-
-// Ordena uma lista de movimentos de lucro por DIA (ignorando o horário
-// salvo em cada um) e, dentro do mesmo dia, preserva a ordem em que eles
-// foram realmente registrados no histórico (ordem de inserção no array).
-//
-// Por quê: uma renovação sem horário de pagamento customizado grava meio-dia
-// (12h) fixo naquele dia (ver registrarMovimentoLucro), enquanto um cadastro
-// novo de cliente grava o horário real do momento em que foi feito. Se dois
-// lançamentos do mesmo dia fossem comparados pelo horário salvo, uma
-// renovação feita à noite podia aparecer como "mais antiga" que um cadastro
-// feito de manhã do mesmo dia — o que é o oposto do que realmente aconteceu.
-// Comparando só o dia (e usando a ordem de inserção como critério de
-// desempate) o lançamento mais recente sempre fica por cima, mesmo quando
-// os dois são do mesmo dia.
-function ordenarMovimentosLucro(lista, ordem){
-    let comIndice = lista.map((mov, indice) => ({ mov, indice }));
-    comIndice.sort((a, b) => {
-        let diaA = new Date(a.mov.data); diaA.setHours(0,0,0,0);
-        let diaB = new Date(b.mov.data); diaB.setHours(0,0,0,0);
-        let diffDia = diaA.getTime() - diaB.getTime();
-        if(diffDia !== 0) return ordem === "desc" ? -diffDia : diffDia;
-        // Mesmo dia: quem foi registrado depois (índice maior no array)
-        // conta como mais recente.
-        return ordem === "desc" ? (b.indice - a.indice) : (a.indice - b.indice);
-    });
-    return comIndice.map(item => item.mov);
-}
 
 function registrarMovimentoLucro(nomeCliente, valor, idOperacao, dataMovimento){
     valor = Number(valor) || 0;
@@ -4573,8 +4559,7 @@ function calcularLucroPeriodo(){
     let movimentos = historicoLucro.filter(mov => {
         let d = new Date(mov.data);
         return d >= inicio && d <= fim;
-    });
-    movimentos = ordenarMovimentosLucro(movimentos, "desc");
+    }).sort((a,b) => new Date(b.data) - new Date(a.data));
 
     let soma = movimentos.reduce((acc, mov) => acc + (Number(mov.valor) || 0), 0);
 
@@ -4638,8 +4623,7 @@ function montarRelatorioPDF(){
     let movimentos = historicoLucro.filter(mov => {
         let d = new Date(mov.data);
         return d >= inicio && d <= fim;
-    });
-    movimentos = ordenarMovimentosLucro(movimentos, "asc");
+    }).sort((a,b) => new Date(a.data) - new Date(b.data));
 
     if(movimentos.length === 0){
         mostrarAlerta("Nenhum movimento de lucro encontrado nesse período.", "aviso");
@@ -4990,7 +4974,7 @@ function adicionarCliente(){
         let custoCreditoAtual = obterCustoCreditoRevenda(servidor);
         let valorTotal = creditos * VALOR_CREDITO_REVENDA;
         let lucroOperacao = creditos * (VALOR_CREDITO_REVENDA - custoCreditoAtual);
-        const hojeISO = new Date().toISOString().split("T")[0];
+        const hojeISO = obterDataCadastroISO();
         const idOperacaoRevendaNovo = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
         const idSub = gerarIdSubRevenda();
 
@@ -5053,12 +5037,14 @@ function adicionarCliente(){
     if(!vencimento){
         let duracao = obterDuracaoPlano(planoTexto);
         if(duracao){
-            let data = adicionarPeriodoData(new Date(), duracao);
+            let data = adicionarPeriodoData(paraDataLocal(obterDataCadastroISO()), duracao);
             vencimento = data.toISOString().split("T")[0];
         }
     }
 
-    const hojeISO = new Date().toISOString().split("T")[0];
+    // Data do cadastro escolhida no formulário (padrão: hoje). É ela que
+    // vale para o lucro, o histórico e a "última renovação" do cliente.
+    const hojeISO = obterDataCadastroISO();
     const idOperacaoNovoCliente = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
     clientes.push({ servidor, servidor2, nome, usuario, senha, whatsapp, vencimento, plano: planoTexto, obs, ultimaRenovacao: hojeISO });
 
@@ -5083,7 +5069,7 @@ function adicionarCliente(){
         // um contando seu próprio custo mensal.
         custoServidorNovo = custoServidorNovo * obterMesesEquivalentes(obterDuracaoPlano(planoTexto));
         let lucroNovoAtual = valorPlanoNovo - custoServidorNovo;
-        registrarMovimentoLucro(nome, lucroNovoAtual, idOperacaoNovoCliente);
+        registrarMovimentoLucro(nome, lucroNovoAtual, idOperacaoNovoCliente, hojeISO);
 
         // Registra também no histórico do próprio cliente, com o lucro já
         // CONGELADO nesse momento — assim, se o custo do servidor mudar
@@ -5108,6 +5094,8 @@ function adicionarCliente(){
     document.getElementById("senha").value = "";
     document.getElementById("whatsapp").value = "";
     document.getElementById("vencimento").value = "";
+    vencimentoEditadoManual = false;
+    if(document.getElementById("dataCadastro")) document.getElementById("dataCadastro").value = hojeISOLocal();
     document.getElementById("obs").value = "";
     document.getElementById("valorRecebido").value = "";
     ocultarValorRecebidoNovamente();
@@ -6102,7 +6090,7 @@ function renderizarHistoricoLucro(){
     });
 
     // ordena do mais antigo para o mais novo, para exibição consistente
-    movimentosMes = ordenarMovimentosLucro(movimentosMes, "asc");
+    movimentosMes.sort((a,b) => new Date(a.data) - new Date(b.data));
 
     // Recalcula o "saldo anterior" de cada linha aqui, na hora de exibir,
     // somando os valores em ordem cronológica — em vez de confiar no campo
@@ -6174,10 +6162,10 @@ function foiLembrado(whatsapp){
     return localStorage.getItem("lembrete_" + whatsapp) === hoje;
 }
 
-async function enviarLembreteComMarca(index){
+function enviarLembreteComMarca(index){
     let cliente = clientes[index];
     if(!cliente) return;
-    await enviarLembrete(index);
+    enviarLembrete(index);
     registrarLembrete(cliente.whatsapp);
     atualizarDashboard();
 }
@@ -6234,11 +6222,6 @@ async function enviarLembrete(index){
     // Evita linha(s) em branco sobrando quando {areacliente}/{link} vier vazio.
     mensagem = mensagem.replace(/\n{3,}/g, "\n\n").trimEnd();
     window.open(`https://wa.me/${whatsapp}?text=${encodeURIComponent(mensagem)}`, "_blank");
-
-    // "Lembrar" é uma das duas ações (junto com "Renovar") que envia para a
-    // nuvem automaticamente. Não trava a tela esperando resposta, já que a
-    // aba do WhatsApp acima já foi aberta — o envio segue em segundo plano.
-    forcarSincronizacaoNuvemAntesDeMensagem();
 }
 
 function salvarConfiguracoes(){
@@ -6286,6 +6269,9 @@ function toggleAdicionar(){
     if(box.style.display !== "none"){
         document.getElementById("tipoCliente").value = "normal";
         alternarTipoCliente();
+
+        let campoDataCadastro = document.getElementById("dataCadastro");
+        if(campoDataCadastro && !campoDataCadastro.value) campoDataCadastro.value = hojeISOLocal();
 
         let campoVencimento = document.getElementById("vencimento");
         if(campoVencimento && !campoVencimento.value){
@@ -6590,23 +6576,14 @@ function congelarLucroHistoricoAntigo(){
    ═══════════════════════════════════════════════════════════
    Guarda em nuvem uma cópia dos mesmos dados do "Backup Completo"
    (clientes, planos, servidores, configurações, histórico de lucro e
-   preferências).
-
-   ENVIO (push) automático: só acontece nas ações de "Renovar" e
-   "Lembrar" (ver renovarCliente() e enviarLembreteComMarca()), logo após
-   o clique — não é preciso fazer nada além disso.
-
-   Qualquer OUTRA alteração local (editar cliente, excluir, cadastrar,
-   mudar configurações, planos, servidores, etc.) fica salva apenas
-   neste aparelho e só é enviada para a nuvem quando o usuário tocar no
-   botão "⬆️ Enviar à Nuvem" nas Configurações (ver enviarNuvemManual()).
-
-   A BUSCA (pull) de dados da nuvem também não é automática — só
-   acontece quando o usuário clica em "Puxar da Nuvem" nas Configurações
-   (ou logo após colar/salvar um novo link ali). Isso evita o conflito de
-   uma busca automática chegar bem na hora em que uma renovação de
-   cliente está sendo processada no Dashboard e sobrescrever dados
-   locais recém-salvos.
+   preferências). Sempre que qualquer uma dessas chaves é salva neste
+   aparelho, o envio (push) para a nuvem é agendado automaticamente para
+   5 segundos depois — não é preciso clicar em nada. Já a BUSCA (pull) de
+   dados da nuvem NÃO é mais automática — só acontece quando o usuário
+   clica em "Puxar da Nuvem" nas Configurações (ou logo após colar/salvar
+   um novo link ali). Isso evita o conflito de uma busca automática chegar
+   bem na hora em que uma renovação de cliente está sendo processada no
+   Dashboard e sobrescrever dados locais recém-salvos.
 */
 const CHAVE_SHEETS_URL_NUVEM = "gestorClientes_sheetsUrl";
 // Se quiser que todo mundo que abrir este mesmo arquivo já sincronize
@@ -6678,36 +6655,23 @@ function desconectarNuvem(){
     });
 }
 
-// IMPORTANTE: diferente de versões anteriores, o localStorage.setItem NÃO
-// é mais interceptado para disparar envio automático a cada alteração.
-// O envio (push) para a nuvem agora só acontece em dois casos:
-//   1) Automaticamente, logo após "Renovar" ou "Lembrar" (ver
-//      renovarCliente() e enviarLembrete(), que chamam
-//      forcarSincronizacaoNuvemAntesDeMensagem()).
-//   2) Manualmente, quando o usuário toca em "⬆️ Enviar à Nuvem" nas
-//      Configurações (ver enviarNuvemManual()).
-// Todas as demais alterações (editar, excluir, cadastrar, configurações,
-// planos, servidores, etc.) continuam sendo salvas normalmente neste
-// aparelho (localStorage), só não sobem sozinhas para a nuvem.
+// Intercepta localStorage.setItem para as chaves sincronizáveis: qualquer
+// função existente no sistema que já salve clientes/planos/servidores/etc.
+// (são dezenas de lugares no código) passa a agendar automaticamente o
+// envio para a nuvem, sem precisar alterar cada um desses lugares.
+(function interceptarLocalStorageParaNuvem(){
+    const originalSetItem = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = function(chave, valor){
+        originalSetItem(chave, valor);
+        if(CHAVES_SINCRONIZAVEIS_NUVEM.indexOf(chave) !== -1 && !aplicandoDadosDaNuvem){
+            agendarNuvemPush();
+        }
+    };
+})();
 
 function agendarNuvemPush(){
     clearTimeout(timerAgendaPushNuvem);
     timerAgendaPushNuvem = setTimeout(nuvemPush, INTERVALO_PUSH_NUVEM_MS);
-}
-
-// Envio manual: botão "⬆️ Enviar à Nuvem" nas Configurações. Envia agora
-// mesmo (sem esperar debounce) tudo o que estiver salvo neste aparelho —
-// inclusive alterações de edição/exclusão/cadastro que não sobem sozinhas.
-async function enviarNuvemManual(){
-    if(!getSheetsUrlNuvem()){
-        mostrarAlerta("Configure e salve o link do Apps Script antes de enviar para a nuvem.", "aviso");
-        return;
-    }
-    clearTimeout(timerAgendaPushNuvem);
-    timerAgendaPushNuvem = null;
-    atualizarStatusSincronizacaoNuvem("📤 Enviando para a nuvem...");
-    const ok = await nuvemPush();
-    if(ok) mostrarSucesso("📤 Dados enviados para a nuvem!");
 }
 
 // Monta o mesmo "pacote" de dados usado no Backup Completo (exportarSistema),
@@ -6857,14 +6821,12 @@ async function nuvemPull(avisar){
     }
 }
 
-// Envia os dados deste aparelho para a nuvem. Disparado automaticamente
-// só por "Renovar" e "Lembrar" (ver forcarSincronizacaoNuvemAntesDeMensagem
-// e agendarNuvemPush chamados nessas duas ações), ou manualmente pelo
-// botão "⬆️ Enviar à Nuvem" (ver enviarNuvemManual). Retorna true/false
-// conforme o envio deu certo ou não.
+// Envia os dados deste aparelho para a nuvem (disparado automaticamente,
+// com 5s de debounce, a cada alteração salva localmente — ver
+// interceptarLocalStorageParaNuvem).
 async function nuvemPush(){
     const url = getSheetsUrlNuvem();
-    if(!url) return false;
+    if(!url) return;
     // Evita que uma busca da nuvem (nuvemPull, seja automática ou manual)
     // rode ao mesmo tempo que este envio e sobrescreva localmente algo que
     // acabou de ser salvo.
@@ -6882,14 +6844,12 @@ async function nuvemPush(){
         if(data && data.ok){
             ultimaSincronizacaoNuvemOk = new Date();
             atualizarStatusSincronizacaoNuvem();
-            return true;
         } else {
             throw new Error((data && data.erro) || "resposta inválida");
         }
     }catch(e){
         console.error("Falha ao sincronizar (push):", e);
         atualizarStatusSincronizacaoNuvem("⚠️ Salvo neste aparelho, mas falhou ao enviar para a nuvem — " + mensagemErroSincronizacaoNuvem(e).replace("⚠️ ", ""));
-        return false;
     } finally {
         sincronizandoNuvemAgora = false;
     }
