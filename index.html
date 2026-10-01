@@ -1931,18 +1931,19 @@ textarea{
             <div class="config-card-body">
                 <div class="config-card-body-interno">
                     <p style="color:#94a3b8; font-size:13px; margin-bottom:10px; line-height:1.5;">
-                        Cole aqui o link do seu Apps Script (Google Sheets) para que clientes, planos, servidores,
-                        configurações e histórico de lucro fiquem salvos também na nuvem. Assim, ao abrir este mesmo
-                        site em outro celular ou computador — colando o mesmo link — tudo aparece sozinho, sem
-                        precisar importar arquivo nenhum. O passo a passo de como gerar esse link está no arquivo
+                        Cole aqui o link do seu Apps Script (Google Sheets). A sincronização é <b>manual</b>:
+                        use <b>Enviar para Nuvem</b> para gravar na planilha os dados deste aparelho e
+                        <b>Puxar da Nuvem</b> para trazer os dados da planilha para cá. Nada é enviado nem
+                        buscado automaticamente. O passo a passo de como gerar o link está no arquivo
                         "Codigo_AppsScript_GestorClientes.gs".
                     </p>
                     <div style="display:flex; gap:8px;">
                         <input type="text" id="inputSheetsUrlNuvem" placeholder="Cole aqui a URL do Apps Script (termina em /exec)" style="flex:1;">
                         <button type="button" class="btn-edit btn-icon" id="btnAlternarLinkNuvem" onclick="alternarEdicaoLinkNuvem()" title="Ver/alterar link">✏️</button>
                     </div>
+                    <button class="btn-add" style="width:100%; margin-top:8px;" onclick="salvarUrlSheetsUI()">💾 Salvar Link</button>
                     <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
-                        <button class="btn-add" style="flex:1;" onclick="salvarUrlSheetsUI()">💾 Salvar Link</button>
+                        <button class="btn-add" style="flex:1;" onclick="enviarParaNuvemManual()">⬆️ Enviar à Nuvem</button>
                         <button class="btn-edit" style="flex:1;" onclick="sincronizarNuvemManual()">⬇️ Puxar da Nuvem</button>
                     </div>
                     <button class="btn-delete" style="width:100%; margin-top:8px;" onclick="desconectarNuvem()">🔌 Desconectar da Nuvem</button>
@@ -3184,12 +3185,6 @@ async function renovarCliente(){
         try{ renderizar(); }catch(e){ console.error(e); }
         atualizarDashboard();
         fecharModalRenovacao();
-        // Tenta enviar a renovação para a nuvem antes de abrir a mensagem —
-        // mas só espera até TIMEOUT_PUSH_NUVEM_MS. Depois disso a mensagem
-        // abre mesmo assim (o envio continua em segundo plano sozinho), pra
-        // não deixar a aba do WhatsApp parada esperando a nuvem por vários
-        // segundos.
-        await comLimiteDeTempo(forcarSincronizacaoNuvemAntesDeMensagem(), TIMEOUT_PUSH_NUVEM_MS);
         enviarMensagemRenovacaoRevenda({ ...cliente, nome: nomeLucro }, creditos, valorTotal, janelaWhatsRenov);
         return;
     }
@@ -3278,22 +3273,13 @@ async function renovarCliente(){
     atualizarDashboard();
     fecharModalRenovacao();
 
-    // O envio para a nuvem e a geração do link encurtado da área do
-    // cliente não dependem um do outro — rodando os dois ao mesmo tempo
-    // (em vez de um depois do outro) a espera total fica limitada ao mais
-    // lento dos dois, não à soma dos dois. Cada um tem um tempo máximo de
-    // espera (comLimiteDeTempo): passado esse tempo, a mensagem abre mesmo
-    // assim — o envio para a nuvem continua sozinho em segundo plano, e o
-    // link (se o encurtador não respondeu a tempo) cai para a versão
-    // completa/não encurtada, sem precisar esperar mais.
-    let [, linkClienteRenov] = await Promise.all([
-        comLimiteDeTempo(forcarSincronizacaoNuvemAntesDeMensagem(), TIMEOUT_PUSH_NUVEM_MS),
-        comLimiteDeTempo(
-            gerarLinkEncurtadoCliente(clientes[clienteRenovacao]),
-            TIMEOUT_ENCURTADOR_MS,
-            obterLinkClienteCompleto(clientes[clienteRenovacao])
-        )
-    ]);
+    // Gera o link encurtado da área do cliente, esperando no máximo
+    // TIMEOUT_ENCURTADOR_MS; passado esse tempo, usa o link completo.
+    let linkClienteRenov = await comLimiteDeTempo(
+        gerarLinkEncurtadoCliente(clientes[clienteRenovacao]),
+        TIMEOUT_ENCURTADOR_MS,
+        obterLinkClienteCompleto(clientes[clienteRenovacao])
+    );
 
     // A mensagem de renovação ainda enxerga o desconto pendente do cliente
     // (usado para já mostrar o valor com desconto). Só depois dela zeramos
@@ -6761,34 +6747,30 @@ function congelarLucroHistoricoAntigo(){
 }
 
 /* ═══════════════════════════════════════════════════════════
-   SINCRONIZAÇÃO EM NUVEM (Google Sheets via Apps Script)
+   SINCRONIZAÇÃO EM NUVEM (Google Sheets via Apps Script) — MANUAL
    ═══════════════════════════════════════════════════════════
    Guarda em nuvem uma cópia dos mesmos dados do "Backup Completo"
    (clientes, planos, servidores, configurações, histórico de lucro e
-   preferências). Sempre que qualquer uma dessas chaves é salva neste
-   aparelho, o envio (push) para a nuvem é agendado automaticamente para
-   5 segundos depois — não é preciso clicar em nada. Já a BUSCA (pull) de
-   dados da nuvem NÃO é mais automática — só acontece quando o usuário
-   clica em "Puxar da Nuvem" nas Configurações (ou logo após colar/salvar
-   um novo link ali). Isso evita o conflito de uma busca automática chegar
-   bem na hora em que uma renovação de cliente está sendo processada no
-   Dashboard e sobrescrever dados locais recém-salvos.
+   preferências). A sincronização é 100% manual, pelas Configurações:
+     • "Enviar para Nuvem": grava na planilha os dados DESTE aparelho
+       (substitui o que estava na nuvem).
+     • "Puxar da Nuvem": traz os dados da planilha para ESTE aparelho
+       (substitui o que estava aqui).
+   Nada é enviado nem buscado automaticamente — nem ao abrir o site, nem
+   ao salvar/renovar clientes, nem em intervalos de tempo.
 */
 const CHAVE_SHEETS_URL_NUVEM = "gestorClientes_sheetsUrl";
-// Se quiser que todo mundo que abrir este mesmo arquivo já sincronize
-// automaticamente com a mesma planilha, cole aqui a URL do seu Apps Script
-// (termina em /exec). Deixe em branco ('') para que cada aparelho configure
-// o próprio link pela tela de Configurações.
+const CHAVE_NUVEM_PENDENTE = "gestorClientes_nuvemPendente";
+// Se quiser que todo mundo que abrir este mesmo arquivo já use a mesma
+// planilha, cole aqui a URL do seu Apps Script (termina em /exec). Deixe em
+// branco ('') para que cada aparelho configure o próprio link pelas Configurações.
 const SHEETS_URL_PADRAO_NUVEM = "https://script.google.com/macros/s/AKfycbw3KlptIAZvw5Tx-EwLu8_Pw2qXDxQSCijkyvsrhF8lbXXiHetbCN1rDF7pgPrxx65J/exec";
-// Chaves do localStorage que, ao serem salvas, disparam o envio para a nuvem.
+// Chaves do localStorage que contam como "alteração ainda não enviada".
 const CHAVES_SINCRONIZAVEIS_NUVEM = ["clientes","planos","servidores","configuracoes","historicoLucro","servidorPadrao","itensPorPagina","modoCompacto","diasLembreteDashboard"];
-// Tempo de espera (debounce) após uma alteração local antes de enviar para a nuvem.
-const INTERVALO_PUSH_NUVEM_MS = 5000;
 
 let sincronizandoNuvemAgora = false;
 let ultimaSincronizacaoNuvemOk = null;
-let aplicandoDadosDaNuvem = false; // evita reenviar para a nuvem o que acabou de vir dela
-let timerAgendaPushNuvem = null;
+let aplicandoDadosDaNuvem = false; // evita marcar como "pendente" o que acabou de vir da nuvem
 let editandoLinkNuvem = false; // true enquanto o campo de link está desbloqueado para colar/ver a URL
 
 function getSheetsUrlNuvem(){
@@ -6802,16 +6784,17 @@ function salvarUrlSheetsUI(){
     const campo = document.getElementById("inputSheetsUrlNuvem");
     if(!campo) return;
     // Se o campo está mascarado (modo "oculto") e já existe um link salvo,
-    // o texto exibido são só bolinhas — não é a URL real. Nesse caso não há
-    // nada novo para salvar; só reforça que já está sincronizado.
+    // o texto exibido são só bolinhas — não é a URL real.
     if(!editandoLinkNuvem && getSheetsUrlNuvem()){
-        mostrarSucesso("🔗 Link já está salvo e sincronizando normalmente.");
+        mostrarSucesso("🔗 O link já está salvo. Use Enviar ou Puxar da Nuvem para sincronizar.");
         return;
     }
     salvarUrlSheetsNuvem(campo.value);
     editandoLinkNuvem = false;
-    mostrarSucesso("🔗 Link salvo! Sincronizando...");
-    nuvemPull(true); // já ativa a sincronização de verdade agora, sem precisar de outro clique
+    const btn = document.getElementById("btnAlternarLinkNuvem");
+    if(btn) btn.textContent = "✏️";
+    atualizarStatusSincronizacaoNuvem();
+    mostrarSucesso("🔗 Link salvo! Use Enviar ou Puxar da Nuvem para sincronizar.");
 }
 
 // Alterna entre mostrar o campo mascarado (bolinhas, somente leitura) e
@@ -6844,24 +6827,27 @@ function desconectarNuvem(){
     });
 }
 
-// Intercepta localStorage.setItem para as chaves sincronizáveis: qualquer
-// função existente no sistema que já salve clientes/planos/servidores/etc.
-// (são dezenas de lugares no código) passa a agendar automaticamente o
-// envio para a nuvem, sem precisar alterar cada um desses lugares.
+// Só MARCA que existem alterações locais ainda não enviadas (para o aviso
+// na tela). Não faz nenhuma requisição de rede.
+function nuvemTemAlteracoesPendentes(){
+    try{ return localStorage.getItem(CHAVE_NUVEM_PENDENTE) === "1"; }catch(e){ return false; }
+}
+function definirAlteracoesPendentesNuvem(valor){
+    try{
+        if(valor) localStorage.setItem(CHAVE_NUVEM_PENDENTE, "1");
+        else localStorage.removeItem(CHAVE_NUVEM_PENDENTE);
+    }catch(e){}
+}
 (function interceptarLocalStorageParaNuvem(){
     const originalSetItem = localStorage.setItem.bind(localStorage);
     localStorage.setItem = function(chave, valor){
         originalSetItem(chave, valor);
         if(CHAVES_SINCRONIZAVEIS_NUVEM.indexOf(chave) !== -1 && !aplicandoDadosDaNuvem){
-            agendarNuvemPush();
+            originalSetItem(CHAVE_NUVEM_PENDENTE, "1");
+            try{ atualizarStatusSincronizacaoNuvem(); }catch(e){}
         }
     };
 })();
-
-function agendarNuvemPush(){
-    clearTimeout(timerAgendaPushNuvem);
-    timerAgendaPushNuvem = setTimeout(nuvemPush, INTERVALO_PUSH_NUVEM_MS);
-}
 
 // Monta o mesmo "pacote" de dados usado no Backup Completo (exportarSistema),
 // para manter os dois formatos compatíveis entre si.
@@ -6906,8 +6892,6 @@ function atualizarStatusSincronizacaoNuvem(msg){
     const urlSalva = getSheetsUrlNuvem();
     // Enquanto não estiver em modo de edição, o campo nunca mostra a URL
     // real — só bolinhas (se já houver link salvo) ou vazio (se não houver).
-    // Isso evita que o link fique visível na tela e seja apagado/alterado
-    // sem querer, o que interromperia a sincronização.
     if(campo && !editandoLinkNuvem){
         campo.value = urlSalva ? "•".repeat(28) : "";
         campo.readOnly = !!urlSalva;
@@ -6915,9 +6899,13 @@ function atualizarStatusSincronizacaoNuvem(msg){
     if(!el) return;
     if(msg){ el.textContent = msg; return; }
     if(!urlSalva){ el.textContent = "Nenhum link configurado — os dados ficam só neste aparelho."; return; }
-    el.textContent = ultimaSincronizacaoNuvemOk
-        ? ("✅ Sincronizado às " + ultimaSincronizacaoNuvemOk.toLocaleTimeString("pt-BR"))
-        : "Ainda não sincronizado.";
+    let texto = ultimaSincronizacaoNuvemOk
+        ? ("✅ Última sincronização às " + ultimaSincronizacaoNuvemOk.toLocaleTimeString("pt-BR"))
+        : "Ainda não sincronizado nesta sessão.";
+    if(nuvemTemAlteracoesPendentes()){
+        texto += " — ⚠️ há alterações neste aparelho que ainda não foram enviadas para a nuvem.";
+    }
+    el.textContent = texto;
 }
 
 function mensagemErroSincronizacaoNuvem(e){
@@ -6931,58 +6919,37 @@ function mensagemErroSincronizacaoNuvem(e){
     return "⚠️ Falha ao sincronizar: " + msg;
 }
 
-// Busca os dados mais recentes da nuvem e aplica neste aparelho.
-// Só é chamada manualmente (botão "Puxar da Nuvem" ou ao salvar um novo
-// link nas Configurações) — não há mais busca automática/periódica.
+// PUXAR DA NUVEM — busca os dados da planilha e substitui os deste aparelho.
+// Só roda quando o usuário clica no botão (e confirma).
 async function nuvemPull(avisar){
     const url = getSheetsUrlNuvem();
-    if(!url){ atualizarStatusSincronizacaoNuvem(); return false; }
-    if(sincronizandoNuvemAgora) return false;
-
-    // Se existe um envio local agendado (debounce de 5s após qualquer
-    // registro — novo cliente, renovação, etc.), envia ele PRIMEIRO. Sem
-    // isso, um pull podia chegar antes desse envio e trazer da nuvem uma
-    // versão mais antiga, sobrescrevendo/perdendo o que acabou de ser
-    // registrado neste aparelho.
-    if(timerAgendaPushNuvem){
-        clearTimeout(timerAgendaPushNuvem);
-        timerAgendaPushNuvem = null;
-        await nuvemPush();
-        // Mesmo depois do envio responder "ok", a escrita pode levar um
-        // instante para ficar realmente visível para uma leitura logo em
-        // seguida (Apps Script/Sheets não garante consistência imediata).
-        // Sem essa pausa, o GET abaixo podia chegar rápido demais e trazer
-        // de volta a versão ANTERIOR à renovação, sobrescrevendo no aparelho
-        // o que acabou de ser enviado (cliente "volta" a aparecer pendente
-        // no Dashboard e o valor renovado some). Por isso o pull sempre
-        // espera um pouco mais do que o tempo do envio antes de buscar.
-        await new Promise(res => setTimeout(res, 2000));
+    if(!url){
+        atualizarStatusSincronizacaoNuvem();
+        if(avisar) mostrarAlerta("Cole e salve o link do Apps Script antes de sincronizar.", "erro", "Sem link");
+        return false;
     }
-
+    if(sincronizandoNuvemAgora) return false;
     sincronizandoNuvemAgora = true;
-    if(avisar) atualizarStatusSincronizacaoNuvem("🔄 Sincronizando...");
+    atualizarStatusSincronizacaoNuvem("🔄 Puxando dados da nuvem...");
     try{
         const resp = await fetch(url + (url.indexOf("?") > -1 ? "&" : "?") + "t=" + Date.now());
         const texto = await resp.text();
         let data;
         try{ data = JSON.parse(texto); }
         catch(eParse){ throw new Error("resposta_nao_json:" + resp.status); }
-        if(data && data.ok){
-            const dadosNuvem = data.dados || {};
-            const clientesLocaisAtuais = JSON.parse(localStorage.getItem("clientes")) || [];
-            const nuvemTemClientes = Array.isArray(dadosNuvem.clientes) && dadosNuvem.clientes.length > 0;
-            // Proteção contra perda de dados: se a nuvem ainda estiver vazia
-            // mas este aparelho já tiver clientes cadastrados, provavelmente
-            // ainda não houve nenhum envio bem-sucedido — em vez de apagar os
-            // dados locais, envia-os para a nuvem.
-            if(!nuvemTemClientes && clientesLocaisAtuais.length > 0){
-                atualizarStatusSincronizacaoNuvem("📤 Nuvem vazia — enviando seus dados locais...");
-                sincronizandoNuvemAgora = false;
-                await nuvemPush();
-                if(avisar) mostrarSucesso("📤 Dados locais enviados para a nuvem (ela estava vazia).");
-                return true;
-            }
-            aplicandoDadosDaNuvem = true;
+        if(!(data && data.ok)) throw new Error((data && data.erro) || "resposta inválida");
+
+        const dadosNuvem = data.dados || {};
+        const nuvemTemClientes = Array.isArray(dadosNuvem.clientes) && dadosNuvem.clientes.length > 0;
+        // Proteção contra perda de dados: nuvem vazia nunca apaga os dados locais.
+        if(!nuvemTemClientes){
+            atualizarStatusSincronizacaoNuvem("⚠️ A nuvem está vazia — nada foi alterado neste aparelho.");
+            if(avisar) mostrarAlerta("A planilha na nuvem está vazia, então nada foi puxado e seus dados locais foram mantidos. Use \"Enviar para Nuvem\" para gravar os dados deste aparelho.", "erro", "Nuvem vazia");
+            return false;
+        }
+
+        aplicandoDadosDaNuvem = true;
+        try{
             localStorage.setItem("clientes", JSON.stringify(dadosNuvem.clientes || []));
             localStorage.setItem("planos", JSON.stringify(dadosNuvem.planos || []));
             localStorage.setItem("servidores", JSON.stringify(dadosNuvem.servidores || []));
@@ -6992,35 +6959,37 @@ async function nuvemPull(avisar){
             if(dadosNuvem.itensPorPagina) localStorage.setItem("itensPorPagina", dadosNuvem.itensPorPagina);
             if(dadosNuvem.modoCompacto !== undefined && dadosNuvem.modoCompacto !== "") localStorage.setItem("modoCompacto", dadosNuvem.modoCompacto);
             if(dadosNuvem.diasLembreteDashboard) localStorage.setItem("diasLembreteDashboard", dadosNuvem.diasLembreteDashboard);
+        } finally {
             aplicandoDadosDaNuvem = false;
-            ultimaSincronizacaoNuvemOk = new Date();
-            atualizarStatusSincronizacaoNuvem();
-            reRenderizarAposSincronizarNuvem();
-            if(avisar) mostrarSucesso("✅ Sincronizado com a nuvem!");
-            sincronizandoNuvemAgora = false;
-            return true;
         }
-        throw new Error((data && data.erro) || "resposta inválida");
+        definirAlteracoesPendentesNuvem(false);
+        ultimaSincronizacaoNuvemOk = new Date();
+        atualizarStatusSincronizacaoNuvem();
+        reRenderizarAposSincronizarNuvem();
+        if(avisar) mostrarSucesso("✅ Dados puxados da nuvem!");
+        return true;
     }catch(e){
-        console.error("Falha ao sincronizar (pull):", e);
+        console.error("Falha ao puxar da nuvem:", e);
         atualizarStatusSincronizacaoNuvem(mensagemErroSincronizacaoNuvem(e));
-        if(avisar) mostrarAlerta(mensagemErroSincronizacaoNuvem(e), "erro", "Falha ao sincronizar");
-        sincronizandoNuvemAgora = false;
+        if(avisar) mostrarAlerta(mensagemErroSincronizacaoNuvem(e), "erro", "Falha ao puxar da nuvem");
         return false;
+    } finally {
+        sincronizandoNuvemAgora = false;
     }
 }
 
-// Envia os dados deste aparelho para a nuvem (disparado automaticamente,
-// com 5s de debounce, a cada alteração salva localmente — ver
-// interceptarLocalStorageParaNuvem).
-async function nuvemPush(){
+// ENVIAR PARA NUVEM — grava na planilha os dados deste aparelho.
+// Só roda quando o usuário clica no botão (e confirma).
+async function nuvemPush(avisar){
     const url = getSheetsUrlNuvem();
-    if(!url) return;
-    // Evita que uma busca da nuvem (nuvemPull, seja automática ou manual)
-    // rode ao mesmo tempo que este envio e sobrescreva localmente algo que
-    // acabou de ser salvo.
-    while(sincronizandoNuvemAgora){ await new Promise(res => setTimeout(res, 300)); }
+    if(!url){
+        atualizarStatusSincronizacaoNuvem();
+        if(avisar) mostrarAlerta("Cole e salve o link do Apps Script antes de sincronizar.", "erro", "Sem link");
+        return false;
+    }
+    if(sincronizandoNuvemAgora) return false;
     sincronizandoNuvemAgora = true;
+    atualizarStatusSincronizacaoNuvem("🔄 Enviando dados para a nuvem...");
     try{
         const payload = montarPayloadNuvem();
         // Envia como texto puro (não "application/json") para evitar bloqueio
@@ -7030,22 +6999,37 @@ async function nuvemPush(){
         let data;
         try{ data = JSON.parse(texto); }
         catch(eParse){ throw new Error("resposta_nao_json:" + resp.status); }
-        if(data && data.ok){
-            ultimaSincronizacaoNuvemOk = new Date();
-            atualizarStatusSincronizacaoNuvem();
-        } else {
-            throw new Error((data && data.erro) || "resposta inválida");
-        }
+        if(!(data && data.ok)) throw new Error((data && data.erro) || "resposta inválida");
+        definirAlteracoesPendentesNuvem(false);
+        ultimaSincronizacaoNuvemOk = new Date();
+        atualizarStatusSincronizacaoNuvem();
+        if(avisar) mostrarSucesso("✅ Dados enviados para a nuvem!");
+        return true;
     }catch(e){
-        console.error("Falha ao sincronizar (push):", e);
-        atualizarStatusSincronizacaoNuvem("⚠️ Salvo neste aparelho, mas falhou ao enviar para a nuvem — " + mensagemErroSincronizacaoNuvem(e).replace("⚠️ ", ""));
+        console.error("Falha ao enviar para a nuvem:", e);
+        atualizarStatusSincronizacaoNuvem(mensagemErroSincronizacaoNuvem(e));
+        if(avisar) mostrarAlerta(mensagemErroSincronizacaoNuvem(e), "erro", "Falha ao enviar para a nuvem");
+        return false;
     } finally {
         sincronizandoNuvemAgora = false;
     }
 }
 
+function enviarParaNuvemManual(){
+    if(!getSheetsUrlNuvem()){ nuvemPush(true); return; }
+    const qtd = (JSON.parse(localStorage.getItem("clientes")) || []).length;
+    const aviso = qtd === 0
+        ? "⚠️ Este aparelho NÃO tem nenhum cliente. Enviar agora vai deixar a nuvem vazia. Tem certeza?"
+        : "Isso vai substituir os dados que estão na nuvem pelos dados deste aparelho (" + qtd + " cliente(s)). Continuar?";
+    pedirConfirmacao(aviso, () => { nuvemPush(true); });
+}
+
 function sincronizarNuvemManual(){
-    nuvemPull(true);
+    if(!getSheetsUrlNuvem()){ nuvemPull(true); return; }
+    const aviso = nuvemTemAlteracoesPendentes()
+        ? "⚠️ Há alterações neste aparelho que NÃO foram enviadas para a nuvem. Puxar agora vai substituí-las pelos dados da nuvem e elas serão perdidas. Continuar?"
+        : "Isso vai substituir os dados deste aparelho pelos dados que estão na nuvem. Continuar?";
+    pedirConfirmacao(aviso, () => { nuvemPull(true); });
 }
 
 // Corre uma Promise contra um "relógio": devolve o que responder primeiro.
@@ -7061,27 +7045,6 @@ function comLimiteDeTempo(promessa, ms, valorPadrao){
     ]);
 }
 
-// Força o envio imediato para a nuvem (em vez de esperar o debounce de 5s).
-// Usada antes de disparar a mensagem de renovação no WhatsApp, para tentar
-// garantir que a renovação já esteja salva na nuvem antes de seguir para a
-// mensagem. Mas essa espera tem um limite (ver TIMEOUT_PUSH_NUVEM_MS,
-// aplicado por quem chama esta função com comLimiteDeTempo): se a nuvem
-// (Google Apps Script) demorar mais que isso — o que é comum, às vezes
-// 5-15s —, a mensagem do WhatsApp já segue em frente mesmo assim, e o
-// envio continua rodando sozinho em segundo plano até terminar. Se não
-// houver link de nuvem configurado, ou se o envio falhar, também segue em
-// frente do mesmo jeito (a mensagem não pode ficar travada por causa da
-// rede).
-async function forcarSincronizacaoNuvemAntesDeMensagem(){
-    if(!getSheetsUrlNuvem()) return;
-    clearTimeout(timerAgendaPushNuvem);
-    timerAgendaPushNuvem = null;
-    try{ await nuvemPush(); }catch(e){ /* já tratado dentro de nuvemPush */ }
-}
-// Tempo máximo (ms) que a tela espera pela confirmação da nuvem antes de
-// abrir o WhatsApp mesmo assim. Aumente se sua internet for muito lenta e
-// você preferir mais garantia; diminua para abrir o WhatsApp ainda mais rápido.
-const TIMEOUT_PUSH_NUVEM_MS = 2500;
 // Tempo máximo (ms) esperando o encurtador de link (TinyURL/is.gd) antes de
 // usar o link completo (não encurtado) como retorno rápido.
 const TIMEOUT_ENCURTADOR_MS = 1500;
@@ -7113,10 +7076,8 @@ document.addEventListener("DOMContentLoaded", function(){
         verificarAlteracoesConfiguracao();
         // Resumo diário (leve atraso para dados já estarem prontos)
         setTimeout(verificarResumoDiario, 400);
-        // Sincronização em nuvem: NÃO busca dados automaticamente ao abrir.
-        // A busca (pull) só acontece manualmente, pelas Configurações
-        // ("Puxar da Nuvem" ou ao salvar um novo link). O envio (push)
-        // é agendado automaticamente 5s após cada alteração local.
+        // Sincronização em nuvem 100% manual: nada é enviado nem buscado
+        // automaticamente. Só os botões das Configurações fazem isso.
         atualizarStatusSincronizacaoNuvem();
     } catch(erro){
         console.log(erro);
