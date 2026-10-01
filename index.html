@@ -2520,7 +2520,7 @@ function salvarEdicaoServidor(){
     salvar();
     localStorage.setItem("servidores", JSON.stringify(servidores));
     renderizarServidores();
-    renderizar();
+    try{ renderizar(); }catch(e){ console.error(e); }
     atualizarDashboard();
     fecharModalServidor();
 }
@@ -2899,7 +2899,7 @@ async function importarClientesExcel(event){
                     }
                 });
                 salvar();
-                renderizar();
+                try{ renderizar(); }catch(e){ console.error(e); }
                 atualizarDashboard();
                 mostrarAlerta(`Importação concluída: ${adicionados} cliente(s) adicionados e ${atualizados} atualizados.`, "sucesso");
             }
@@ -3002,7 +3002,7 @@ function importarSistema(event){
                 sincronizarPlanosFaltantes();
                 renderizarServidores();
                 renderizarPlanos();
-                renderizar();
+                try{ renderizar(); }catch(e){ console.error(e); }
                 atualizarDashboard();
                 mostrarAlerta("Backup restaurado com sucesso.", "sucesso");
             });
@@ -3181,7 +3181,7 @@ async function renovarCliente(){
         });
 
         salvar();
-        renderizar();
+        try{ renderizar(); }catch(e){ console.error(e); }
         atualizarDashboard();
         fecharModalRenovacao();
         // Tenta enviar a renovação para a nuvem antes de abrir a mensagem —
@@ -3274,7 +3274,7 @@ async function renovarCliente(){
     });
 
     salvar();
-    renderizar();
+    try{ renderizar(); }catch(e){ console.error(e); }
     atualizarDashboard();
     fecharModalRenovacao();
 
@@ -4306,7 +4306,7 @@ function salvarEdicaoDataLancamento(pularDuplicado){
     if(maisRecente) cliente.ultimaRenovacao = maisRecente;
 
     salvar();
-    renderizar();
+    try{ renderizar(); }catch(e){ console.error(e); }
     atualizarDashboard();
     fecharEdicaoDataLancamento();
     mostrarSucesso(`📅 Data do lançamento alterada para ${formatarData(novaData)}.`);
@@ -4520,7 +4520,7 @@ function reverterCreditoRevenda(indexCliente, posicaoCredito){
     if(!entradaRemovida) return;
 
     salvar();
-    renderizar();
+    try{ renderizar(); }catch(e){ console.error(e); }
     atualizarDashboard();
     mostrarHistoricoCreditos(indexCliente);
     mostrarSucesso(`↩️ Lançamento de ${entradaRemovida.creditos || 0} crédito(s) revertido — valor removido do lucro do mês.`);
@@ -4612,7 +4612,7 @@ function salvarEdicaoCredito(){
     });
 
     salvar();
-    renderizar();
+    try{ renderizar(); }catch(e){ console.error(e); }
     atualizarDashboard();
     document.getElementById("modalEditarCredito").classList.remove("ativo");
     mostrarHistoricoCreditos(indexCliente);
@@ -5156,7 +5156,7 @@ function adicionarCliente(){
 
         clientes = JSON.parse(localStorage.getItem("clientes")) || [];
         filtroAtual = "todos";
-        renderizar();
+        try{ renderizar(); }catch(e){ console.error(e); }
         atualizarDashboard();
         document.getElementById("nome").value = "";
         document.getElementById("whatsapp").value = "";
@@ -5258,7 +5258,7 @@ function adicionarCliente(){
     enviarMensagemAtivacao(novoCliente);
     clientes = JSON.parse(localStorage.getItem("clientes")) || [];
     filtroAtual = "todos";
-    renderizar();
+    try{ renderizar(); }catch(e){ console.error(e); }
     atualizarDashboard();
     document.getElementById("nome").value = "";
     document.getElementById("usuario").value = "";
@@ -5294,7 +5294,7 @@ function deletar(index){
     pedirConfirmacao(`Deseja realmente excluir o cliente "${cliente.nome}"?`, () => {
         clientes.splice(index, 1);
         salvar();
-        renderizar();
+        try{ renderizar(); }catch(e){ console.error(e); }
         atualizarDashboard();
         mostrarToastDesfazer(cliente, index);
     }, "🗑️ Excluir cliente");
@@ -5321,7 +5321,7 @@ function desfazerExclusao(){
     let { cliente, index } = undoExclusao;
     clientes.splice(Math.min(index, clientes.length), 0, cliente);
     salvar();
-    renderizar();
+    try{ renderizar(); }catch(e){ console.error(e); }
     atualizarDashboard();
     document.getElementById("toastDesfazer").classList.remove("ativo");
     undoExclusao = null;
@@ -5772,7 +5772,7 @@ function salvarEdicaoCliente(){
     }
 
     salvar();
-    renderizar();
+    try{ renderizar(); }catch(e){ console.error(e); }
     atualizarDashboard();
     fecharModal();
 }
@@ -6008,7 +6008,7 @@ function atualizarCreditosRevenda(){
         // daquela renovação consome créditos de servidor conforme sua
         // duração (1 mês = 1 crédito, trimestral = 3, semestral = 6, anual = 12...).
         if(!cliente.ultimaRenovacao) return;
-        let d = new Date(cliente.ultimaRenovacao);
+        let d = lerDataLocal(cliente.ultimaRenovacao);
         let creditos = obterMesesEquivalentes(obterDuracaoPlano(cliente.plano));
         registrar(nomeServidor, chaveMes(d.getFullYear(), d.getMonth()), "cliente", creditos);
 
@@ -6127,7 +6127,7 @@ function atualizarDashboard(){
     let boxOntem = document.getElementById("boxVenceramOntem");
     let venceramOntem = 0;
 
-    atualizarCreditosRevenda();
+    try{ atualizarCreditosRevenda(); }catch(e){ console.error("Erro no card de créditos:", e); }
 
     clientes.forEach(cliente => {
         let status = statusCliente(cliente.vencimento);
@@ -6688,7 +6688,7 @@ function confirmarCreditoRapido(){
     });
 
     salvar();
-    renderizar();
+    try{ renderizar(); }catch(e){ console.error(e); }
     atualizarDashboard();
     fecharPainelCreditoRapido();
     mostrarSucesso(`✅ ${creditos} créditos lançados para ${nomeLucro}`);
