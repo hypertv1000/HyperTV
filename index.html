@@ -3122,9 +3122,13 @@ function definirCreditosRapido(qtd){
     atualizarValorRenovacaoRevenda();
 }
 
+let renovacaoConfirmadaPeloUsuario = false;
+
 async function renovarCliente(){
     if(clienteRenovacao === null) return;
     let cliente = clientes[clienteRenovacao];
+    const pularDuplicadoRenov = renovacaoConfirmadaPeloUsuario;
+    renovacaoConfirmadaPeloUsuario = false;
 
     // Abre a aba do WhatsApp em branco JÁ AGORA, ainda dentro do clique do
     // usuário — se ela só fosse aberta depois de aguardar o envio para a
@@ -3201,6 +3205,25 @@ async function renovarCliente(){
     let campoDataPagamento = document.getElementById("renovacaoDataPagamento");
     const dataPagamentoISORenov = (campoDataPagamento && campoDataPagamento.value) || new Date().toISOString().split("T")[0];
     let dataPagamentoRenov = paraDataLocal(dataPagamentoISORenov);
+
+    // Aviso de possível lançamento duplicado (mesmo cliente, data e valor).
+    if(!pularDuplicadoRenov){
+        let mvR = (cliente.plano || "").match(/R\$\s*([\d.,]+)/);
+        let vBaseR = mvR ? parseFloat(mvR[1].replace(",",".")) || 0 : 0;
+        let custoPrevR = custoMensalServidoresCliente(cliente) * obterMesesEquivalentes(duracao);
+        let lucroPrevR = (vBaseR - (cliente.descontoIndicacao || 0)) - custoPrevR;
+        if(existeLancamentoDuplicado(cliente.nome, lucroPrevR, dataPagamentoISORenov)){
+            if(janelaWhatsRenov) janelaWhatsRenov.close();
+            pedirConfirmacao(
+                textoAvisoDuplicado(cliente.nome, lucroPrevR, dataPagamentoISORenov),
+                () => { renovacaoConfirmadaPeloUsuario = true; renovarCliente(); },
+                "⚠️ Possível lançamento duplicado",
+                null,
+                { ok:"✅ Renovar mesmo assim", classeOk:"btn-add" }
+            );
+            return;
+        }
+    }
 
     // Planos sem duração definida (ex: revenda) não têm vencimento: a
     // renovação apenas registra a data e fica no histórico, sem alterar
@@ -3607,6 +3630,17 @@ function moedaCentavos(valor){
      curtas ou personalizadas, ex: 7 dias, 15 dias).
    - null: plano sem duração definida (ex: revenda).
 ══════════════════════════════════════════════ */
+
+// Lê datas salvas como "AAAA-MM-DD" no fuso LOCAL (new Date("AAAA-MM-DD") vira
+// meia-noite UTC e, no Brasil, "volta" para o dia/mês anterior). Timestamps
+// ISO completos continuam sendo lidos normalmente.
+function lerDataLocal(valor){
+    if(typeof valor === "string" && /^\d{4}-\d{2}-\d{2}$/.test(valor)){
+        let p = valor.split("-");
+        return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]), 12, 0, 0);
+    }
+    return new Date(valor);
+}
 
 // Converte uma string "AAAA-MM-DD" em Date no fuso local, evitando o bug
 // de o JS interpretar "AAAA-MM-DD" como UTC (o que pode voltar 1 dia
@@ -4083,10 +4117,43 @@ function registrarMovimentoLucro(nomeCliente, valor, idOperacao, dataMovimento){
     localStorage.setItem("historicoLucro", JSON.stringify(historicoLucro));
 }
 
+// Converte o timestamp salvo em historicoLucro para "YYYY-MM-DD" no fuso LOCAL.
+function dataLocalISODeTimestamp(ts){
+    const d = new Date(ts);
+    if(isNaN(d.getTime())) return "";
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+}
+
+// Procura, no histórico de lucro, um lançamento do mesmo cliente, na mesma
+// data e com o mesmo valor. Serve para avisar antes de lançar em duplicidade.
+function existeLancamentoDuplicado(nomeCliente, valor, dataISO, ignorarIdOperacao){
+    const nome = (nomeCliente || "").trim().toLowerCase();
+    const v = Number(valor) || 0;
+    if(!nome || v === 0) return false;
+    return historicoLucro.some(mov =>
+        (mov.cliente || "").trim().toLowerCase() === nome &&
+        Math.abs((Number(mov.valor) || 0) - v) < 0.005 &&
+        dataLocalISODeTimestamp(mov.data) === dataISO &&
+        (!ignorarIdOperacao || mov.idOperacao !== ignorarIdOperacao)
+    );
+}
+
+function textoAvisoDuplicado(nome, valor, dataISO){
+    return `Já existe um lançamento de ${moeda(valor)} para "${nome}" em ${formatarData(dataISO)}. Deseja lançar mesmo assim?`;
+}
+
 /* ===== MODAL DE CONFIRMAÇÃO GENÉRICO ===== */
 let acaoCancelamentoPendente = null;
 
-function pedirConfirmacao(mensagem, callback, titulo, aoCancelar){
+function pedirConfirmacao(mensagem, callback, titulo, aoCancelar, textos){
+    textos = textos || {};
+    const btnOk = document.getElementById("btnConfirmacaoOk");
+    const btnCancelar = document.getElementById("btnConfirmacaoCancelar");
+    if(btnOk){
+        btnOk.innerText = textos.ok || "🗑️ Confirmar";
+        btnOk.className = textos.classeOk || "btn-delete";
+    }
+    if(btnCancelar) btnCancelar.innerText = textos.cancelar || "Cancelar";
     document.getElementById("confirmacaoTitulo").innerText = titulo || "⚠️ Confirmar ação";
     document.getElementById("confirmacaoMensagem").innerText = mensagem;
     acaoConfirmacaoPendente = callback;
@@ -4155,20 +4222,94 @@ function aplicarModoCompacto(){
 function mostrarHistorico(index){
     let cliente = clientes[index];
     if(!cliente) return;
+    const podeEditarData = !ehClienteRevenda(cliente);
     document.getElementById("historicoNome").innerText = cliente.nome || "";
     let historico = cliente.historico || [];
     let conteudo = document.getElementById("historicoConteudo");
     if(historico.length === 0){
         conteudo.innerHTML = `<div style="color:#94a3b8;">Nenhuma renovação registrada ainda.</div>`;
     } else {
-        conteudo.innerHTML = [...historico].reverse().map(item => `
+        conteudo.innerHTML = historico.map((item, posicao) => ({ item, posicao })).reverse().map(({ item, posicao }) => `
 <div style="background:#1e293b; border-radius:10px; padding:10px 14px; color:#cbd5e1;">
-    <div style="color:#38bdf8; font-weight:bold;">${formatarData(item.data)}</div>
+    <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+        <div style="color:#38bdf8; font-weight:bold;">${formatarData(item.data)}</div>
+        ${podeEditarData ? `<button class="btn-edit" style="padding:4px 10px; font-size:12px; border:none; border-radius:8px; cursor:pointer;" onclick="abrirEdicaoDataLancamento(${index}, ${posicao})">✏️ Editar data</button>` : ""}
+    </div>
     <div>De: <span>${formatarData(item.vencimentoAnterior)}</span> → Para: <span>${formatarData(item.vencimentoNovo)}</span></div>
     ${item.plano ? `<div>📦 ${item.plano}</div>` : ""}
 </div>`).join("");
     }
     document.getElementById("modalHistorico").classList.add("ativo");
+}
+
+/* ===== EDITAR DATA DE UM LANÇAMENTO (cadastro/renovação) ===== */
+let lancamentoDataEditando = null; // { indexCliente, posicao }
+
+function abrirEdicaoDataLancamento(indexCliente, posicao){
+    const cliente = clientes[indexCliente];
+    const item = cliente && Array.isArray(cliente.historico) ? cliente.historico[posicao] : null;
+    if(!item) return;
+    lancamentoDataEditando = { indexCliente, posicao };
+    const campo = document.getElementById("editLancamentoData");
+    campo.max = hojeISOLocal();
+    campo.value = item.data || "";
+    document.getElementById("editLancamentoInfo").innerText = `${cliente.nome || ""}${item.plano ? " — " + item.plano : ""}`;
+    document.getElementById("modalHistorico").classList.remove("ativo");
+    document.getElementById("modalEditarDataLancamento").classList.add("ativo");
+}
+
+function fecharEdicaoDataLancamento(){
+    document.getElementById("modalEditarDataLancamento").classList.remove("ativo");
+    const estado = lancamentoDataEditando;
+    lancamentoDataEditando = null;
+    if(estado) mostrarHistorico(estado.indexCliente);
+}
+
+function salvarEdicaoDataLancamento(pularDuplicado){
+    if(!lancamentoDataEditando) return;
+    const { indexCliente, posicao } = lancamentoDataEditando;
+    const cliente = clientes[indexCliente];
+    const item = cliente && Array.isArray(cliente.historico) ? cliente.historico[posicao] : null;
+    if(!item) return;
+
+    const novaData = document.getElementById("editLancamentoData").value;
+    if(!novaData){ mostrarAlerta("Informe a data do lançamento.", "aviso"); return; }
+    if(novaData > hojeISOLocal()){ mostrarAlerta("A data não pode ser no futuro.", "aviso"); return; }
+    if(novaData === item.data){ fecharEdicaoDataLancamento(); return; }
+
+    // Localiza o movimento correspondente no histórico de lucro do Dashboard.
+    // Lançamentos novos têm idOperacao; os antigos são achados por cliente + data.
+    const nomeAlvo = (cliente.nome || "").trim().toLowerCase();
+    let movimento = item.idOperacao
+        ? historicoLucro.find(m => m.idOperacao === item.idOperacao)
+        : historicoLucro.find(m => !m.idOperacao && dataLocalISODeTimestamp(m.data) === item.data && (m.cliente || "").trim().toLowerCase() === nomeAlvo);
+
+    if(!pularDuplicado && movimento && existeLancamentoDuplicado(movimento.cliente, movimento.valor, novaData, movimento.idOperacao)){
+        pedirConfirmacao(
+            textoAvisoDuplicado(movimento.cliente, Number(movimento.valor) || 0, novaData),
+            () => salvarEdicaoDataLancamento(true),
+            "⚠️ Possível lançamento duplicado",
+            null,
+            { ok:"✅ Mudar mesmo assim", classeOk:"btn-add" }
+        );
+        return;
+    }
+
+    item.data = novaData;
+    if(movimento){
+        const partes = novaData.split("-");
+        movimento.data = new Date(Number(partes[0]), Number(partes[1]) - 1, Number(partes[2]), 12, 0, 0).toISOString();
+        localStorage.setItem("historicoLucro", JSON.stringify(historicoLucro));
+    }
+    // "Última renovação" passa a ser a data mais recente do histórico.
+    const maisRecente = cliente.historico.reduce((max, h) => (h.data && h.data > max ? h.data : max), "");
+    if(maisRecente) cliente.ultimaRenovacao = maisRecente;
+
+    salvar();
+    renderizar();
+    atualizarDashboard();
+    fecharEdicaoDataLancamento();
+    mostrarSucesso(`📅 Data do lançamento alterada para ${formatarData(novaData)}.`);
 }
 
 function fecharHistorico(){
@@ -4250,7 +4391,7 @@ function mostrarHistoricoCreditos(index){
         .map((op, posicao) => ({ op, posicao }))
         .filter(({op}) => {
             if(!op.data) return false;
-            let d = new Date(op.data);
+            let d = lerDataLocal(op.data);
             if(d.getMonth() !== mesAtual || d.getFullYear() !== anoAtual) return false;
             if(filtroSubId && op.subRevendaId !== filtroSubId) return false;
             return true;
@@ -4823,7 +4964,7 @@ function somaCreditosGrupoMes(cliente, mes, ano){
     if(!cliente || !Array.isArray(cliente.historicoCreditos)) return 0;
     return cliente.historicoCreditos.reduce((total, op) => {
         if(!op.data) return total;
-        let d = new Date(op.data);
+        let d = lerDataLocal(op.data);
         if(d.getMonth() !== mes || d.getFullYear() !== ano) return total;
         return total + (op.creditos || 0);
     }, 0);
@@ -4851,7 +4992,7 @@ function creditosPorSubRevendaMes(cliente, mes, ano){
     if(!cliente || !Array.isArray(cliente.historicoCreditos)) return mapa;
     cliente.historicoCreditos.forEach(op => {
         if(!op.data) return;
-        let d = new Date(op.data);
+        let d = lerDataLocal(op.data);
         if(d.getMonth() !== mes || d.getFullYear() !== ano) return;
         let chave = op.subRevendaId || op.subRevendaNome || cliente.nome;
         let nome = op.subRevendaNome || cliente.nome;
@@ -4916,6 +5057,7 @@ function enviarMensagemRenovacaoRevenda(cliente, creditos, valorTotal, janelaPre
 // assim que um cliente é adicionado. =====
 let valorRecebidoDesbloqueado = false;
 let timerPressionamentoBtnAdicionar = null;
+let cadastroConfirmadoPeloUsuario = false; // pula confirmações já respondidas ao reexecutar o cadastro
 let ignorarProximoCliqueAdicionar = false;
 
 function atualizarVisibilidadeValorRecebido(){
@@ -4963,6 +5105,10 @@ function adicionarCliente(){
         ignorarProximoCliqueAdicionar = false;
         return;
     }
+    // Quando o usuário já respondeu às confirmações (usuário repetido /
+    // lançamento duplicado) e o cadastro é reexecutado, não pergunta de novo.
+    const pularConfirmacoes = cadastroConfirmadoPeloUsuario;
+    cadastroConfirmadoPeloUsuario = false;
     let tipoCliente = document.getElementById("tipoCliente") ? document.getElementById("tipoCliente").value : "normal";
     let servidor = document.getElementById("servidor").value;
     let nome = document.getElementById("nome").value;
@@ -5023,7 +5169,7 @@ function adicionarCliente(){
     let servidor2 = document.getElementById("servidor2") ? document.getElementById("servidor2").value : "";
     let usuario = document.getElementById("usuario").value;
     let clienteExistente = clientes.find(c => (c.usuario||"").trim().toLowerCase() === usuario.trim().toLowerCase());
-    if(clienteExistente){
+    if(clienteExistente && !pularConfirmacoes){
         if(!confirm(`⚠️ Já existe um cliente com esse usuário (${clienteExistente.nome}). Deseja continuar?`)) return;
     }
     let senha = document.getElementById("senha").value;
@@ -5047,6 +5193,29 @@ function adicionarCliente(){
     // Data do cadastro escolhida no formulário (padrão: hoje). É ela que
     // vale para o lucro, o histórico e a "última renovação" do cliente.
     const hojeISO = obterDataCadastroISO();
+
+    // Aviso de possível lançamento duplicado (mesmo cliente, mesma data e
+    // mesmo valor de lucro já registrados).
+    if(!pularConfirmacoes){
+        let campoVR = document.getElementById("valorRecebido");
+        let vrStr = campoVR ? campoVR.value : "";
+        let vr = vrStr !== "" ? parseFloat(String(vrStr).replace(",",".")) : NaN;
+        let mv = (planoTexto || "").match(/R\$\s*([\d.,]+)/);
+        let vBase = mv ? parseFloat(mv[1].replace(",",".")) || 0 : 0;
+        let custoPrev = custoMensalServidoresCliente({ servidor, servidor2 }) * obterMesesEquivalentes(obterDuracaoPlano(planoTexto));
+        let lucroPrev = (!isNaN(vr) ? vr : vBase) - custoPrev;
+        if(existeLancamentoDuplicado(nome, lucroPrev, hojeISO)){
+            pedirConfirmacao(
+                textoAvisoDuplicado(nome, lucroPrev, hojeISO),
+                () => { cadastroConfirmadoPeloUsuario = true; adicionarCliente(); },
+                "⚠️ Possível lançamento duplicado",
+                null,
+                { ok:"✅ Lançar mesmo assim", classeOk:"btn-add" }
+            );
+            return;
+        }
+    }
+    const cadastroRetroativo = hojeISO < hojeISOLocal() && !!obterDuracaoPlano(planoTexto);
     const idOperacaoNovoCliente = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
     clientes.push({ servidor, servidor2, nome, usuario, senha, whatsapp, vencimento, plano: planoTexto, obs, ultimaRenovacao: hojeISO });
 
@@ -5102,6 +5271,19 @@ function adicionarCliente(){
     document.getElementById("valorRecebido").value = "";
     ocultarValorRecebidoNovamente();
     if(document.getElementById("servidor2")) document.getElementById("servidor2").value = "";
+
+    // Cadastro com data antiga: pergunta se o cliente já renovou desde então
+    // e, se sim, abre a renovação (a data do pagamento pode ser ajustada lá).
+    if(cadastroRetroativo){
+        const indiceNovoCliente = clientes.length - 1;
+        pedirConfirmacao(
+            `"${nome}" foi cadastrado com a data ${formatarData(hojeISO)}. Ele já renovou depois disso?`,
+            () => abrirModalRenovacao(indiceNovoCliente),
+            "🔁 Já renovou?",
+            null,
+            { ok:"🔄 Sim, registrar renovação", cancelar:"Não", classeOk:"btn-add" }
+        );
+    }
 }
 
 let undoExclusao = null; // { cliente, index, timeoutId }
@@ -5815,7 +5997,7 @@ function atualizarCreditosRevenda(){
         if(ehClienteRevenda(cliente)){
             (cliente.historicoCreditos || []).forEach(op => {
                 if(!op.data) return;
-                let d = new Date(op.data);
+                let d = lerDataLocal(op.data);
                 let creditos = Number(op.creditos) || 0;
                 registrar(nomeServidor, chaveMes(d.getFullYear(), d.getMonth()), "revenda", creditos);
             });
@@ -5956,7 +6138,7 @@ function atualizarDashboard(){
         // por isso não muda se o custo do servidor mudar depois.
         if(ehClienteRevenda(cliente)){
             (cliente.historicoCreditos || []).forEach(operacao => {
-                let dataOperacao = new Date(operacao.data);
+                let dataOperacao = lerDataLocal(operacao.data);
                 if(dataOperacao.getMonth() === mesAtual && dataOperacao.getFullYear() === anoAtual){
                     lucro += Number(operacao.lucro) || 0;
                 }
@@ -5977,7 +6159,7 @@ function atualizarDashboard(){
         let historicoCliente = Array.isArray(cliente.historico) ? cliente.historico : [];
         let entradasNoMes = historicoCliente.filter(h => {
             if(!h.data) return false;
-            let d = new Date(h.data);
+            let d = lerDataLocal(h.data);
             return d.getMonth() === mesAtual && d.getFullYear() === anoAtual;
         });
 
@@ -5988,13 +6170,18 @@ function atualizarDashboard(){
             // foi o que fez o valor disparar: um cliente criado e depois
             // renovado no mesmo mês, por exemplo, passou a contar as duas
             // operações, quando só deveria contar uma.
-            let ultimaEntradaNoMes = entradasNoMes.reduce((maisRecente, atual) =>
-                new Date(atual.data) >= new Date(maisRecente.data) ? atual : maisRecente
-            );
-            if(typeof ultimaEntradaNoMes.lucro === "number"){
-                lucro += ultimaEntradaNoMes.lucro;
-            } else {
-                lucro += calcularLucroClienteLegado(cliente, ultimaEntradaNoMes.plano || cliente.plano);
+            // ATUALIZAÇÃO: agora soma TODAS as operações do mês que já têm o
+            // lucro congelado (ex: cadastro + renovação no mesmo mês contam
+            // as duas, igual ao Histórico de lucro). Só as entradas antigas,
+            // sem o campo `lucro`, continuam contando uma única vez (a mais
+            // recente), para não inflar o valor de dados legados.
+            entradasNoMes.filter(h => typeof h.lucro === "number").forEach(h => { lucro += h.lucro; });
+            let entradasLegadas = entradasNoMes.filter(h => typeof h.lucro !== "number");
+            if(entradasLegadas.length > 0){
+                let ultimaLegada = entradasLegadas.reduce((maisRecente, atual) =>
+                    new Date(atual.data) >= new Date(maisRecente.data) ? atual : maisRecente
+                );
+                lucro += calcularLucroClienteLegado(cliente, ultimaLegada.plano || cliente.plano);
             }
         } else if(cliente.ultimaRenovacao){
             // Sem nenhuma entrada de histórico neste mês (cliente criado
@@ -7093,8 +7280,8 @@ document.addEventListener("DOMContentLoaded", function(){
         </div>
         <p id="confirmacaoMensagem" style="color:#cbd5e1;"></p>
         <div style="display:flex; gap:10px;">
-            <button class="btn-delete" style="flex:1;" onclick="confirmarAcaoModal()">🗑️ Confirmar</button>
-            <button class="btn-edit" style="flex:1;" onclick="fecharModalConfirmacao()">Cancelar</button>
+            <button class="btn-delete" id="btnConfirmacaoOk" style="flex:1;" onclick="confirmarAcaoModal()">🗑️ Confirmar</button>
+            <button class="btn-edit" id="btnConfirmacaoCancelar" style="flex:1;" onclick="fecharModalConfirmacao()">Cancelar</button>
         </div>
     </div>
 </div>
@@ -7109,6 +7296,21 @@ document.addEventListener("DOMContentLoaded", function(){
         <strong id="historicoNome" style="color:white;"></strong>
         <div id="historicoConteudo" style="display:flex; flex-direction:column; gap:10px; max-height:50vh; overflow-y:auto;"></div>
         <button class="btn-edit" onclick="fecharHistorico()">Fechar</button>
+    </div>
+</div>
+
+<!-- MODAL EDITAR DATA DO LANÇAMENTO -->
+<div class="modal" id="modalEditarDataLancamento">
+    <div class="modal-box">
+        <div class="modal-topo">
+            <h2>✏️ Editar data do lançamento</h2>
+            <button class="fechar-modal" onclick="fecharEdicaoDataLancamento()">✕</button>
+        </div>
+        <strong id="editLancamentoInfo" style="color:white;"></strong>
+        <label style="font-size:12px;color:#94a3b8;display:block;margin:6px 0 4px;">📅 Data do lançamento (cadastro/renovação)</label>
+        <input type="date" id="editLancamentoData">
+        <div style="color:#94a3b8; font-size:12px; margin-top:6px;">A data do lucro no Dashboard é atualizada junto. O vencimento do cliente não é alterado.</div>
+        <button class="btn-add" onclick="salvarEdicaoDataLancamento()">✅ Salvar data</button>
     </div>
 </div>
 
