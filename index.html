@@ -1931,9 +1931,9 @@ textarea{
             <div class="config-card-body">
                 <div class="config-card-body-interno">
                     <p style="color:#94a3b8; font-size:13px; margin-bottom:10px; line-height:1.5;">
-                        Cole aqui o link do seu Apps Script (Google Sheets). A sincronização é <b>manual</b>:
+                        Cole aqui o link do seu Apps Script (Google Sheets). A sincronização é <b>manual</b> (exceto ao tocar em Renovar, que envia na hora):
                         use <b>Enviar para Nuvem</b> para gravar na planilha os dados deste aparelho e
-                        <b>Puxar da Nuvem</b> para trazer os dados da planilha para cá. Nada é enviado nem
+                        <b>Puxar da Nuvem</b> para trazer os dados da planilha para cá. Fora isso, nada é enviado nem
                         buscado automaticamente. O passo a passo de como gerar o link está no arquivo
                         "Codigo_AppsScript_GestorClientes.gs".
                     </p>
@@ -1943,7 +1943,7 @@ textarea{
                     </div>
                     <button class="btn-add" style="width:100%; margin-top:8px;" onclick="salvarUrlSheetsUI()">💾 Salvar Link</button>
                     <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
-                        <button class="btn-add" style="flex:1;" onclick="enviarParaNuvemManual()">⬆️ Enviar à Nuvem</button>
+                        <button class="btn-add" style="flex:1;" onclick="enviarParaNuvemManual()">⬆️ Enviar para Nuvem</button>
                         <button class="btn-edit" style="flex:1;" onclick="sincronizarNuvemManual()">⬇️ Puxar da Nuvem</button>
                     </div>
                     <button class="btn-delete" style="width:100%; margin-top:8px;" onclick="desconectarNuvem()">🔌 Desconectar da Nuvem</button>
@@ -3185,6 +3185,10 @@ async function renovarCliente(){
         try{ renderizar(); }catch(e){ console.error(e); }
         atualizarDashboard();
         fecharModalRenovacao();
+        // Envia a renovação para a nuvem e espera no máximo TIMEOUT_PUSH_NUVEM_MS.
+        // Passado esse tempo, a mensagem abre mesmo assim (o envio continua
+        // em segundo plano até terminar).
+        await comLimiteDeTempo(nuvemPush(false), TIMEOUT_PUSH_NUVEM_MS);
         enviarMensagemRenovacaoRevenda({ ...cliente, nome: nomeLucro }, creditos, valorTotal, janelaWhatsRenov);
         return;
     }
@@ -3273,13 +3277,18 @@ async function renovarCliente(){
     atualizarDashboard();
     fecharModalRenovacao();
 
-    // Gera o link encurtado da área do cliente, esperando no máximo
-    // TIMEOUT_ENCURTADOR_MS; passado esse tempo, usa o link completo.
-    let linkClienteRenov = await comLimiteDeTempo(
-        gerarLinkEncurtadoCliente(clientes[clienteRenovacao]),
-        TIMEOUT_ENCURTADOR_MS,
-        obterLinkClienteCompleto(clientes[clienteRenovacao])
-    );
+    // Envio da renovação para a nuvem + geração do link encurtado rodam ao
+    // mesmo tempo. Cada um espera no máximo o seu limite (envio: 2,5s);
+    // depois disso a mensagem do WhatsApp abre mesmo assim — o envio
+    // continua em segundo plano e o link cai para a versão completa.
+    let [, linkClienteRenov] = await Promise.all([
+        comLimiteDeTempo(nuvemPush(false), TIMEOUT_PUSH_NUVEM_MS),
+        comLimiteDeTempo(
+            gerarLinkEncurtadoCliente(clientes[clienteRenovacao]),
+            TIMEOUT_ENCURTADOR_MS,
+            obterLinkClienteCompleto(clientes[clienteRenovacao])
+        )
+    ]);
 
     // A mensagem de renovação ainda enxerga o desconto pendente do cliente
     // (usado para já mostrar o valor com desconto). Só depois dela zeramos
@@ -6756,8 +6765,9 @@ function congelarLucroHistoricoAntigo(){
        (substitui o que estava na nuvem).
      • "Puxar da Nuvem": traz os dados da planilha para ESTE aparelho
        (substitui o que estava aqui).
-   Nada é enviado nem buscado automaticamente — nem ao abrir o site, nem
-   ao salvar/renovar clientes, nem em intervalos de tempo.
+   Única exceção: ao tocar em "Renovar", a renovação é enviada para a
+   nuvem automaticamente (espera até 2,5s e então abre o WhatsApp).
+   Nada mais é enviado ou buscado sozinho.
 */
 const CHAVE_SHEETS_URL_NUVEM = "gestorClientes_sheetsUrl";
 const CHAVE_NUVEM_PENDENTE = "gestorClientes_nuvemPendente";
@@ -7045,6 +7055,9 @@ function comLimiteDeTempo(promessa, ms, valorPadrao){
     ]);
 }
 
+// Tempo máximo (ms) que a renovação espera o envio para a nuvem antes de
+// abrir o WhatsApp mesmo assim.
+const TIMEOUT_PUSH_NUVEM_MS = 2500;
 // Tempo máximo (ms) esperando o encurtador de link (TinyURL/is.gd) antes de
 // usar o link completo (não encurtado) como retorno rápido.
 const TIMEOUT_ENCURTADOR_MS = 1500;
