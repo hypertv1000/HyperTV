@@ -2455,7 +2455,7 @@ async function enviarMensagemVencido(cliente){
         areacliente: linkCliente ? `*🔗 Sua área do cliente:*\n${linkCliente}` : ""
     });
     mensagem = mensagem.replace(/\n{3,}/g, "\n\n").trimEnd();
-    window.open(`https://wa.me/${cliente.whatsapp}?text=${encodeURIComponent(mensagem)}`, "_blank");
+    abrirLinkNaMesmaAba(`https://wa.me/${cliente.whatsapp}?text=${encodeURIComponent(mensagem)}`);
 }
 
 function limparWhatsapp(campo){
@@ -2469,8 +2469,8 @@ function normalizarCusto(valor){
     return `R$ ${numero.toFixed(2).replace(".",",")}`;
 }
 
-function abrirWhatsappSuporte(){ window.open("https://wa.me/5584991815446","_blank"); }
-function abrirTelegramSuporte(){ window.open("https://t.me/hypertv_1000","_blank"); }
+function abrirWhatsappSuporte(){ abrirLinkNaMesmaAba("https://wa.me/5584991815446"); }
+function abrirTelegramSuporte(){ abrirLinkNaMesmaAba("https://t.me/hypertv_1000"); }
 
 function alterarOrdenacao(){
     ordenacaoAtual = document.getElementById("ordenacaoClientes").value;
@@ -2609,7 +2609,7 @@ async function enviarMensagemAtivacao(cliente){
         let obsFormatado = cliente.obs.replace(/\\n/g,"\n");
         mensagem += `\n~~~~~~~~~~~~~~~~~~\n${obsFormatado}`;
     }
-    window.open(`https://wa.me/${cliente.whatsapp}?text=${encodeURIComponent(mensagem)}`, "_blank");
+    abrirLinkNaMesmaAba(`https://wa.me/${cliente.whatsapp}?text=${encodeURIComponent(mensagem)}`);
 }
 
 async function exportarClientesExcel(){
@@ -3188,7 +3188,9 @@ async function renovarCliente(){
         // Envia a renovação para a nuvem e espera no máximo TIMEOUT_PUSH_NUVEM_MS.
         // Passado esse tempo, a mensagem abre mesmo assim (o envio continua
         // em segundo plano até terminar).
-        await comLimiteDeTempo(nuvemPush(false), TIMEOUT_PUSH_NUVEM_MS);
+        mostrarCarregandoWhatsApp(true);
+        try{ await comLimiteDeTempo(nuvemPush(false), TIMEOUT_PUSH_NUVEM_MS); }
+        finally{ mostrarCarregandoWhatsApp(false); }
         enviarMensagemRenovacaoRevenda({ ...cliente, nome: nomeLucro }, creditos, valorTotal, janelaWhatsRenov);
         return;
     }
@@ -3281,14 +3283,20 @@ async function renovarCliente(){
     // mesmo tempo. Cada um espera no máximo o seu limite (envio: 2,5s);
     // depois disso a mensagem do WhatsApp abre mesmo assim — o envio
     // continua em segundo plano e o link cai para a versão completa.
-    let [, linkClienteRenov] = await Promise.all([
-        comLimiteDeTempo(nuvemPush(false), TIMEOUT_PUSH_NUVEM_MS),
-        comLimiteDeTempo(
-            gerarLinkEncurtadoCliente(clientes[clienteRenovacao]),
-            TIMEOUT_ENCURTADOR_MS,
-            obterLinkClienteCompleto(clientes[clienteRenovacao])
-        )
-    ]);
+    mostrarCarregandoWhatsApp(true);
+    let linkClienteRenov;
+    try{
+        [, linkClienteRenov] = await Promise.all([
+            comLimiteDeTempo(nuvemPush(false), TIMEOUT_PUSH_NUVEM_MS),
+            comLimiteDeTempo(
+                gerarLinkEncurtadoCliente(clientes[clienteRenovacao]),
+                TIMEOUT_ENCURTADOR_MS,
+                obterLinkClienteCompleto(clientes[clienteRenovacao])
+            )
+        ]);
+    } finally {
+        mostrarCarregandoWhatsApp(false);
+    }
 
     // A mensagem de renovação ainda enxerga o desconto pendente do cliente
     // (usado para já mostrar o valor com desconto). Só depois dela zeramos
@@ -3378,84 +3386,42 @@ function obterLinkClienteCompleto(cliente){
     return `${urlPortal}?d=${codigo}`;
 }
 
-// Abre o link do WhatsApp com segurança. Se "janelaPreAberta" foi aberta
-// ainda dentro do clique do usuário (antes de qualquer espera de rede),
-// navega ela para o link em vez de chamar window.open novamente — isso
-// evita que o navegador bloqueie o pop-up depois de aguardar o envio para
-// a nuvem e/ou o encurtamento do link.
-function abrirWhatsApp(numero, mensagem, janelaPreAberta){
-    const url = `https://wa.me/${numero}?text=${encodeURIComponent(mensagem)}`;
-    if(janelaPreAberta && !janelaPreAberta.closed){
-        janelaPreAberta.location.href = url;
-    } else {
-        window.open(url, "_blank");
-    }
+// Tela "Preparando mensagem..." mostrada por cima do site enquanto a
+// renovação é enviada para a nuvem (e o link é preparado), antes de ir
+// para o WhatsApp.
+function mostrarCarregandoWhatsApp(mostrar){
+    let el = document.getElementById("overlayCarregandoWhatsApp");
+    if(!mostrar){ if(el) el.remove(); return; }
+    if(el) return;
+    el = document.createElement("div");
+    el.id = "overlayCarregandoWhatsApp";
+    el.style.cssText = "position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(11,20,26,0.92);";
+    el.innerHTML = '<style>@keyframes girarWpp{to{transform:rotate(360deg)}}</style>'
+        + '<div style="text-align:center;color:#e9edef;max-width:320px;font-family:inherit;">'
+        + '<div style="width:48px;height:48px;margin:0 auto 20px;border:4px solid rgba(37,211,102,0.25);border-top-color:#25D366;border-radius:50%;animation:girarWpp 0.8s linear infinite;"></div>'
+        + '<div style="font-size:17px;font-weight:600;margin-bottom:8px;">Preparando mensagem no WhatsApp...</div>'
+        + '<div style="font-size:13px;color:#8696a0;">Só um instante</div></div>';
+    document.body.appendChild(el);
 }
 
-// Abre a aba do WhatsApp já no clique do usuário (pra não ser bloqueada
-// pelo navegador depois de esperar a nuvem/rede) e preenche com uma tela
-// de carregamento simples, no lugar da tela branca "feia" que ficava
-// enquanto a mensagem era preparada.
+// Abre links externos (WhatsApp/Telegram) NA MESMA ABA, em vez de abrir uma
+// aba nova. Quando o link abre o app do WhatsApp, o navegador do celular
+// costuma fechar a aba nova ao sair — e o site ia junto. Navegando na mesma
+// aba, o site continua no histórico e é só voltar para retomar (os dados
+// ficam salvos no localStorage). Navegação na mesma aba também não é
+// bloqueada como pop-up, mesmo depois de esperar rede.
+function abrirLinkNaMesmaAba(url){
+    window.location.href = url;
+}
+
+function abrirWhatsApp(numero, mensagem){
+    abrirLinkNaMesmaAba(`https://wa.me/${numero}?text=${encodeURIComponent(mensagem)}`);
+}
+
+// Mantida por compatibilidade: não abre mais nenhuma aba. Retorna null e o
+// restante do código já trata esse caso.
 function abrirJanelaCarregandoWhatsApp(){
-    let janela = window.open("", "_blank");
-    if(!janela) return null;
-    try{
-        janela.document.write(`<!DOCTYPE html>
-<html lang="pt-BR"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
-<title>Preparando mensagem...</title>
-<style>
-  *{ box-sizing:border-box; }
-  html,body{
-    height:100%;
-    min-height:100vh;
-    margin:0;
-  }
-  body{
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    padding:24px;
-    background:#0b141a;
-    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
-  }
-  .caixa{
-    width:100%;
-    max-width:320px;
-    text-align:center;
-    color:#e9edef;
-  }
-  .spinner{
-    width:clamp(40px, 12vw, 56px);
-    height:clamp(40px, 12vw, 56px);
-    margin:0 auto 20px;
-    border:4px solid rgba(37,211,102,0.25);
-    border-top-color:#25D366;
-    border-radius:50%;
-    animation:girar 0.8s linear infinite;
-  }
-  @keyframes girar{ to{ transform:rotate(360deg); } }
-  .titulo{
-    font-size:clamp(15px, 4.5vw, 18px);
-    font-weight:600;
-    margin-bottom:8px;
-    line-height:1.4;
-  }
-  .sub{
-    font-size:clamp(12px, 3.5vw, 14px);
-    color:#8696a0;
-  }
-</style></head>
-<body>
-  <div class="caixa">
-    <div class="spinner"></div>
-    <div class="titulo">Preparando mensagem no WhatsApp...</div>
-    <div class="sub">Só um instante</div>
-  </div>
-</body></html>`);
-        janela.document.close();
-    }catch(e){ /* se der erro ao escrever, segue com a aba mesmo assim */ }
-    return janela;
+    return null;
 }
 
 async function gerarLinkEncurtadoCliente(cliente){
@@ -3587,7 +3553,7 @@ async function enviarDadosCliente(cliente){
 
 📦 Plano: ${cliente.plano}`;
     if(linkCliente) mensagem += `\n\n🔗 Sua área do cliente:\n${linkCliente}`;
-    window.open(`https://wa.me/${cliente.whatsapp}?text=${encodeURIComponent(mensagem)}`, "_blank");
+    abrirLinkNaMesmaAba(`https://wa.me/${cliente.whatsapp}?text=${encodeURIComponent(mensagem)}`);
 }
 
 function filtrarClientes(tipo){
@@ -5032,7 +4998,7 @@ function enviarMensagemAtivacaoRevenda(cliente){
 🔸 Créditos: ${ultimo.creditos || 0}
 🔸 Valor: ${moeda(ultimo.valorTotal || 0)}`;
     if(rodape) mensagem += `\n\n${rodape}`;
-    window.open(`https://wa.me/${cliente.whatsapp}?text=${encodeURIComponent(mensagem)}`, "_blank");
+    abrirLinkNaMesmaAba(`https://wa.me/${cliente.whatsapp}?text=${encodeURIComponent(mensagem)}`);
 }
 
 function enviarMensagemRenovacaoRevenda(cliente, creditos, valorTotal, janelaPreAberta){
@@ -6405,7 +6371,7 @@ async function enviarLembrete(index){
     });
     // Evita linha(s) em branco sobrando quando {areacliente}/{link} vier vazio.
     mensagem = mensagem.replace(/\n{3,}/g, "\n\n").trimEnd();
-    window.open(`https://wa.me/${whatsapp}?text=${encodeURIComponent(mensagem)}`, "_blank");
+    abrirLinkNaMesmaAba(`https://wa.me/${whatsapp}?text=${encodeURIComponent(mensagem)}`);
 }
 
 function salvarConfiguracoes(){
